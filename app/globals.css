@@ -1,26 +1,84 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #05070d;
+  --foreground: #f7f4ec;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  --color-background: var(--color-lux-bg);
+  --color-foreground: var(--color-lux-fg);
+  --font-sans: var(--font-body), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-display), ui-serif, Georgia, serif;
+  --font-mono: var(--font-mono), ui-monospace, monospace;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-lux-bg: #05070d;
+  --color-lux-canvas: #0a0e18;
+  --color-lux-panel: #101a2c;
+  --color-lux-raised: #162238;
+  --color-lux-elevated: #1c2d45;
+  --color-lux-field: #060a14;
+  --color-lux-line: #2a3548;
+  --color-lux-line-soft: #1e2838;
+  --color-lux-muted: #8a9bb5;
+  --color-lux-subtle: #5c6b82;
+  --color-lux-fg: #f7f4ec;
+  --color-lux-fg-dim: #d9d2c2;
+  --color-lux-rim: rgba(212, 175, 55, 0.08);
+
+  --color-lux-gold: #c9a227;
+  --color-lux-gold-bright: #ecd985;
+  --color-lux-gold-muted: #8a7538;
+  --color-lux-gold-soft: rgba(201, 162, 39, 0.14);
+
+  --color-lux-crimson: #9f1b3d;
+  --color-lux-crimson-soft: rgba(159, 27, 61, 0.16);
+
+  --color-lux-teal: #2dd4bf;
+  --color-lux-teal-soft: rgba(45, 212, 191, 0.12);
+
+  --color-lux-primary: #c9a227;
+  --color-lux-primary-hover: #ddb84a;
+  --color-lux-primary-fg: #060912;
+  --color-lux-primary-soft: rgba(201, 162, 39, 0.2);
+
+  --color-lux-link: #5eead4;
+  --color-lux-link-hover: #b6f7ef;
+
+  --color-lux-emerald: #34d399;
+  --color-lux-emerald-soft: rgba(13, 60, 42, 0.55);
+  --color-lux-emerald-ring: rgba(201, 162, 39, 0.45);
+
+  --color-lux-rose: #fb7185;
+  --color-lux-rose-soft: rgba(42, 16, 24, 0.65);
+  --color-lux-rose-ring: rgba(201, 162, 39, 0.4);
+
+  --color-lux-amber: #c9a227;
+  --color-lux-amber-soft: rgba(201, 162, 39, 0.12);
+  --color-lux-amber-ring: #ddb84a;
+  --color-lux-amber-fg: #1a1408;
+
+  --color-lux-indigo: #a5b4fc;
+  --color-lux-indigo-soft: rgba(99, 102, 241, 0.1);
+  --color-lux-indigo-ring: rgba(129, 140, 248, 0.45);
+
+  --color-lux-champagne: #c9a227;
+  --color-lux-champagne-muted: #8a7538;
+  --color-lux-gold-line: rgba(201, 162, 39, 0.35);
+  --color-lux-gold-glow: rgba(201, 162, 39, 0.14);
+  --color-lux-hint: #ecd985;
+  --color-lux-done-surface: rgba(13, 60, 42, 0.55);
+  --color-lux-done-ring: rgba(52, 211, 153, 0.45);
+  --color-lux-done-fg: #d1fae5;
+  --color-lux-social-surface: rgba(42, 16, 24, 0.65);
+  --color-lux-social-ring: rgba(251, 113, 133, 0.35);
+  --color-lux-social-fg: #fff1f2;
+  --color-lux-social: #fda4af;
+  --color-lux-done: #6ee7b7;
+  --color-lux-ink: #060912;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-lux-bg);
+  color: var(--color-lux-fg-dim);
 }

@@ -52,3 +52,17 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
+
+export async function DELETE() {
+  try {
+    await ensureAppData();
+    const result = await LeadModel.deleteMany({});
+    return NextResponse.json({
+      ok: true,
+      deletedCount: result.deletedCount ?? 0,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Failed";
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}

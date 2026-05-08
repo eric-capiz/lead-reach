@@ -7,8 +7,22 @@ import type { LeadApi, MergeFieldLite, TemplateLite } from "@/lib/types/dashboar
 
 function statusLabel(s: LeadStatus) {
   if (s === "sent") return "Contacted";
-  if (s === "social_ready") return "Social ready";
   return "Pending";
+}
+
+function leadWebsiteHref(uri: string | null | undefined): string | null {
+  if (!uri?.trim()) return null;
+  const t = uri.trim();
+  if (/^https?:\/\//i.test(t)) return t;
+  return `https://${t}`;
+}
+
+function leadWebsiteHostLabel(href: string): string {
+  try {
+    return new URL(href).hostname.replace(/^www\./i, "");
+  } catch {
+    return href.replace(/^https?:\/\//i, "").slice(0, 48);
+  }
 }
 
 export function LeadCard({
@@ -54,16 +68,14 @@ export function LeadCard({
   }, [mergedBody]);
 
   const done = row.status === "sent";
-  const social = row.status === "social_ready";
+  const websiteHref = leadWebsiteHref(row.websiteUri);
 
   return (
     <article
       className={`group relative flex flex-col rounded-2xl border p-5 transition ${
         done
           ? "border-[color:var(--color-lux-emerald-ring)] bg-gradient-to-br from-lux-emerald-soft to-lux-panel shadow-[0_18px_48px_-16px_rgba(0,0,0,0.55)] ring-1 ring-[color:var(--color-lux-gold-line)]/40"
-          : social
-            ? "border-[color:var(--color-lux-rose-ring)] bg-gradient-to-br from-lux-rose-soft to-lux-panel shadow-[0_18px_48px_-16px_rgba(0,0,0,0.55)] ring-1 ring-[color:var(--color-lux-gold-line)]/35"
-            : "border-lux-line bg-lux-panel shadow-[0_1px_0_var(--color-lux-rim)_inset,0_20px_50px_-18px_rgba(0,0,0,0.5)] ring-1 ring-[color:var(--color-lux-gold-line)]/15 hover:ring-[color:var(--color-lux-gold-line)]/35"
+          : "border-lux-line bg-lux-panel shadow-[0_1px_0_var(--color-lux-rim)_inset,0_20px_50px_-18px_rgba(0,0,0,0.5)] ring-1 ring-[color:var(--color-lux-gold-line)]/15 hover:ring-[color:var(--color-lux-gold-line)]/35"
       }`}
     >
       <div className="flex items-start justify-between gap-3">
@@ -83,9 +95,7 @@ export function LeadCard({
             className={`shrink-0 rounded-sm px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.15em] ${
               done
                 ? "border border-[color:var(--color-lux-emerald-ring)] bg-lux-emerald-soft/80 text-lux-done-fg"
-                : social
-                  ? "border border-[color:var(--color-lux-rose-ring)] bg-lux-rose-soft/90 text-lux-social-fg"
-                  : "border border-[color:var(--color-lux-gold-line)] bg-lux-gold-soft text-lux-gold-bright"
+                : "border border-[color:var(--color-lux-gold-line)] bg-lux-gold-soft text-lux-gold-bright"
             }`}
           >
             {statusLabel(row.status)}
@@ -98,9 +108,20 @@ export function LeadCard({
           <span className="rounded-sm border border-[color:var(--color-lux-gold-line)]/30 bg-lux-gold-soft px-2 py-1 font-mono text-[11px] text-lux-gold-bright">
             {row.phone}
           </span>
-          <span className="rounded-sm border border-[color:var(--color-lux-crimson)]/25 bg-lux-crimson-soft px-2 py-1 text-[11px] font-medium text-lux-fg">
-            {row.websiteStatus}
-          </span>
+          {websiteHref ? (
+            <a
+              href={websiteHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded-sm border border-[color:var(--color-lux-teal)]/35 bg-lux-teal/10 px-2 py-1 text-[11px] font-medium text-lux-link transition hover:border-lux-teal/50 hover:text-lux-link-hover"
+            >
+              {row.websiteStatus} ↗
+            </a>
+          ) : (
+            <span className="rounded-sm border border-[color:var(--color-lux-crimson)]/25 bg-lux-crimson-soft px-2 py-1 text-[11px] font-medium text-lux-fg">
+              {row.websiteStatus}
+            </span>
+          )}
         </div>
         <div className="col-span-2 text-lux-muted">
           <span className="text-lux-subtle">Email </span>
@@ -112,7 +133,7 @@ export function LeadCard({
             <span className="font-mono text-[11px] text-lux-fg-dim">—</span>
           )}
         </div>
-        <div className="col-span-2 flex flex-wrap gap-3 text-[11px]">
+        <div className="col-span-2 flex flex-wrap items-baseline gap-x-3 gap-y-2 text-[11px]">
           <a
             href={row.googleMapsUrl}
             target="_blank"
@@ -121,6 +142,20 @@ export function LeadCard({
           >
             Maps ↗
           </a>
+          {websiteHref ? (
+            <span className="text-lux-subtle">
+              Site:{" "}
+              <a
+                href={websiteHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="max-w-[14rem] truncate font-mono font-medium text-lux-link transition hover:text-lux-link-hover"
+                title={websiteHref}
+              >
+                {leadWebsiteHostLabel(websiteHref)}
+              </a>
+            </span>
+          ) : null}
           <span className="text-lux-subtle">
             IG:{" "}
             {row.instagram?.startsWith("http") ? (
@@ -161,14 +196,14 @@ export function LeadCard({
       <div className="mt-4 flex flex-wrap gap-2 border-t border-lux-line-soft pt-3">
         <button
           type="button"
-          disabled={busy}
+          disabled={busy || done}
           onClick={() => {
             setBusy(true);
-            void onStatusChange(row._id, "social_ready").finally(() => setBusy(false));
+            void onStatusChange(row._id, "sent").finally(() => setBusy(false));
           }}
-          className="rounded-sm border border-lux-line bg-lux-canvas px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-lux-muted hover:border-lux-rose/40 hover:text-lux-social"
+          className="rounded-sm border border-[color:var(--color-lux-emerald-ring)]/50 bg-lux-emerald-soft/25 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-lux-done-fg transition hover:border-[color:var(--color-lux-emerald-ring)]/70 hover:bg-lux-emerald-soft/40 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          Mark social ready
+          Contacted
         </button>
         <button
           type="button"
@@ -209,17 +244,6 @@ export function LeadCard({
           className="rounded-sm border border-lux-line bg-lux-canvas px-4 py-2 text-xs font-semibold tracking-wide text-lux-fg-dim transition hover:border-lux-teal/40 hover:text-lux-link"
         >
           Copy message
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => {
-            setBusy(true);
-            void onStatusChange(row._id, "sent").finally(() => setBusy(false));
-          }}
-          className="rounded-sm bg-lux-primary px-4 py-2 text-xs font-semibold tracking-wide text-lux-primary-fg shadow-[0_6px_24px_-6px_rgba(201,162,39,0.45)] transition hover:bg-lux-primary-hover"
-        >
-          Mark sent
         </button>
       </div>
     </article>

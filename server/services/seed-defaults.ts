@@ -80,7 +80,9 @@ I'm {{myName}}. Florists thrive when seasonal galleries read effortlessly.
   },
 ];
 
-export async function ensureSeeded(): Promise<void> {
+let ensureSeededInFlight: Promise<void> | null = null;
+
+async function runEnsureSeeded(): Promise<void> {
   await connectDB();
 
   if ((await AppSettingsModel.countDocuments()) === 0) {
@@ -108,4 +110,15 @@ export async function ensureSeeded(): Promise<void> {
   }
 
   await LeadModel.deleteMany({ isSample: true });
+}
+
+/** One completed run per server process; concurrent calls share the same work. */
+export async function ensureSeeded(): Promise<void> {
+  if (!ensureSeededInFlight) {
+    ensureSeededInFlight = runEnsureSeeded().catch((err) => {
+      ensureSeededInFlight = null;
+      throw err;
+    });
+  }
+  return ensureSeededInFlight;
 }

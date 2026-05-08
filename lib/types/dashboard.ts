@@ -8,6 +8,7 @@ export type LeadApi = {
   phone: string;
   email: string | null;
   websiteStatus: string;
+  websiteUri: string | null;
   googleMapsUrl: string;
   instagram: string | null;
   facebook: string | null;

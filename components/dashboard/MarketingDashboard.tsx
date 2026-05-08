@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { APP_NAME } from "@/lib/constants";
 import type { LeadStatus, WebsiteFilter } from "@/lib/constants";
 import { applyMergeTemplate, buildMergeMap } from "@/lib/merge";
@@ -37,6 +37,15 @@ const statAccentColors = [
 const gridBg =
   "linear-gradient(rgba(201,162,39,0.04)_1px,transparent_1px),linear-gradient(90deg,rgba(201,162,39,0.04)_1px,transparent_1px)";
 
+const RUN_SUCCESS_AUTO_DISMISS_MS = 10_000;
+
+type RunSuccessSummary = {
+  textQuery: string;
+  rawCount: number;
+  matchedCount: number;
+  savedCount: number;
+};
+
 const tabs: { id: TabId; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "leads", label: "Leads table" },
@@ -68,6 +77,11 @@ function normalizeLead(raw: Record<string, unknown>): LeadApi {
     phone: String(raw.phone ?? ""),
     email: (raw.email as string | null) ?? null,
     websiteStatus: String(raw.websiteStatus ?? ""),
+    websiteUri: (() => {
+      const w = raw.websiteUri;
+      if (typeof w === "string" && w.trim()) return w.trim();
+      return null;
+    })(),
     googleMapsUrl: String(raw.googleMapsUrl ?? ""),
     instagram: (raw.instagram as string | null) ?? null,
     facebook: (raw.facebook as string | null) ?? null,
@@ -84,6 +98,34 @@ export function MarketingDashboard() {
   const [bootError, setBootError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [runBusy, setRunBusy] = useState(false);
+  const [runSuccess, setRunSuccess] = useState<RunSuccessSummary | null>(null);
+  const runSuccessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearRunSuccessTimer = useCallback(() => {
+    if (runSuccessTimerRef.current) {
+      clearTimeout(runSuccessTimerRef.current);
+      runSuccessTimerRef.current = null;
+    }
+  }, []);
+
+  const dismissRunSuccess = useCallback(() => {
+    clearRunSuccessTimer();
+    setRunSuccess(null);
+  }, [clearRunSuccessTimer]);
+
+  const showRunSuccess = useCallback(
+    (summary: RunSuccessSummary) => {
+      clearRunSuccessTimer();
+      setRunSuccess(summary);
+      runSuccessTimerRef.current = setTimeout(() => {
+        setRunSuccess(null);
+        runSuccessTimerRef.current = null;
+      }, RUN_SUCCESS_AUTO_DISMISS_MS);
+    },
+    [clearRunSuccessTimer],
+  );
+
+  useEffect(() => () => clearRunSuccessTimer(), [clearRunSuccessTimer]);
 
   const [categories, setCategories] = useState<CategoryRow[]>([]);
   const [locDraft, setLocDraft] = useState("");
@@ -126,23 +168,43 @@ export function MarketingDashboard() {
   const [newMergeKey, setNewMergeKey] = useState("");
   const [newMergeLabel, setNewMergeLabel] = useState("");
   const [newMergeValue, setNewMergeValue] = useState("");
+  const [deleteAllModalOpen, setDeleteAllModalOpen] = useState(false);
+  const [deleteAllBusy, setDeleteAllBusy] = useState(false);
 
-  const loadLeads = useCallback(async (page: number, search: string, sort: "new" | "old") => {
+  useEffect(() => {
+    if (!deleteAllModalOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !deleteAllBusy) setDeleteAllModalOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [deleteAllModalOpen, deleteAllBusy]);
+
+  const fetchLeadsPage = useCallback(async (page: number, search: string, sort: "new" | "old") => {
     const q = new URLSearchParams({ page: String(page), limit: "20", sort });
     if (search) q.set("search", search);
-    const res = await apiJson<LeadsApiResponse>(`/api/leads?${q}`);
-    setLeadsPage(page);
-    setLeadsSearchQuery(search);
-    setLeadsSort(sort);
-    setLeads(res.items.map((x) => normalizeLead(x)));
-    setLeadsTotal(res.total);
-    setLeadsTotalPages(res.totalPages);
+    return apiJson<LeadsApiResponse>(`/api/leads?${q}`);
   }, []);
+
+  const loadLeads = useCallback(
+    async (page: number, search: string, sort: "new" | "old") => {
+      const res = await fetchLeadsPage(page, search, sort);
+      setLeadsPage(res.page);
+      setLeadsSearchQuery(search);
+      setLeadsSort(sort);
+      setLeads(res.items.map((x) => normalizeLead(x)));
+      setLeadsTotal(res.total);
+      setLeadsTotalPages(res.totalPages);
+    },
+    [fetchLeadsPage],
+  );
 
   const refresh = useCallback(
     async (options?: { forceTemplateSync?: boolean; resetLeadsPage?: number }) => {
       const ignoreTplDirty = options?.forceTemplateSync === true;
-      const [c, s, t, m, st] = await Promise.all([
+      const page = options?.resetLeadsPage ?? leadsPage;
+
+      const [c, s, t, m, st, leadsRes] = await Promise.all([
         apiJson<{ items: CategoryRow[] }>("/api/categories"),
         apiJson<{ settings: SettingsRow | null }>("/api/settings"),
         apiJson<{ items: Record<string, unknown>[] }>("/api/templates"),
@@ -156,6 +218,7 @@ export function MarketingDashboard() {
             messagesSent: number;
           };
         }>("/api/stats"),
+        fetchLeadsPage(page, leadsSearchQuery, leadsSort),
       ]);
 
       setCategories(c.items);
@@ -188,10 +251,22 @@ export function MarketingDashboard() {
       }
       setMergeFields(m.items);
       setStats(st.stats);
-      const page = options?.resetLeadsPage ?? leadsPage;
-      await loadLeads(page, leadsSearchQuery, leadsSort);
+
+      setLeadsPage(leadsRes.page);
+      setLeadsSearchQuery(leadsSearchQuery);
+      setLeadsSort(leadsSort);
+      setLeads(leadsRes.items.map((x) => normalizeLead(x)));
+      setLeadsTotal(leadsRes.total);
+      setLeadsTotalPages(leadsRes.totalPages);
     },
-    [tplDirty, selectedTplId, leadsPage, leadsSearchQuery, leadsSort, loadLeads],
+    [
+      tplDirty,
+      selectedTplId,
+      leadsPage,
+      leadsSearchQuery,
+      leadsSort,
+      fetchLeadsPage,
+    ],
   );
 
   useEffect(() => {
@@ -199,8 +274,7 @@ export function MarketingDashboard() {
     (async () => {
       try {
         setLoading(true);
-        await apiJson("/api/bootstrap");
-        if (!cancelled) await refresh();
+        await refresh();
       } catch (e) {
         if (!cancelled) setBootError(e instanceof Error ? e.message : "Load failed");
       } finally {
@@ -267,9 +341,12 @@ export function MarketingDashboard() {
         }),
       });
       await refresh({ resetLeadsPage: 1 });
-      window.alert(
-        `Run complete.\nQuery: ${res.textQuery}\nPlaces returned: ${res.rawCount}\nAfter website filter: ${res.matchedCount}\nUpserted leads: ${res.savedCount}`,
-      );
+      showRunSuccess({
+        textQuery: res.textQuery,
+        rawCount: res.rawCount,
+        matchedCount: res.matchedCount,
+        savedCount: res.savedCount,
+      });
     } catch (e) {
       window.alert(e instanceof Error ? e.message : "Run failed");
     } finally {
@@ -404,6 +481,19 @@ export function MarketingDashboard() {
     await refresh();
   };
 
+  const confirmDeleteAllLeads = async () => {
+    try {
+      setDeleteAllBusy(true);
+      await apiJson<{ ok: boolean; deletedCount: number }>("/api/leads", { method: "DELETE" });
+      setDeleteAllModalOpen(false);
+      await refresh({ resetLeadsPage: 1 });
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Failed to delete leads");
+    } finally {
+      setDeleteAllBusy(false);
+    }
+  };
+
   const statRows = [
     { label: "Leads found", value: stats.leadsFound },
     { label: "No website", value: stats.noWebsite },
@@ -445,6 +535,112 @@ export function MarketingDashboard() {
           ].join(", "),
         }}
       />
+
+      {deleteAllModalOpen ? (
+        <div className="fixed inset-0 z-[100] flex items-end justify-center p-4 sm:items-center">
+          <button
+            type="button"
+            disabled={deleteAllBusy}
+            className="absolute inset-0 bg-black/60 backdrop-blur-[3px] transition-opacity disabled:opacity-90"
+            aria-label="Close dialog"
+            onClick={() => {
+              if (!deleteAllBusy) setDeleteAllModalOpen(false);
+            }}
+          />
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="delete-all-title"
+            aria-describedby="delete-all-desc"
+            className="relative z-10 w-full max-w-md overflow-hidden rounded-2xl border border-lux-crimson/35 bg-lux-panel/98 shadow-[0_28px_80px_-24px_rgba(0,0,0,0.75),0_0_0_1px_rgba(159,27,61,0.15)] ring-1 ring-lux-crimson/20"
+          >
+            <div
+              className="h-1 w-full bg-gradient-to-r from-lux-crimson/40 via-lux-crimson to-lux-crimson/45"
+              aria-hidden
+            />
+            <div className="px-6 pb-5 pt-5 sm:px-8 sm:pt-6">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-lux-crimson">Danger zone</p>
+              <h2 id="delete-all-title" className="mt-2 font-serif text-xl font-semibold tracking-tight text-lux-fg">
+                Delete all leads?
+              </h2>
+              <p id="delete-all-desc" className="mt-3 text-sm leading-relaxed text-lux-muted">
+                This removes every lead from your database. Contact status and other data saved on each lead will be
+                lost. Your templates and merge fields are not deleted. This cannot be undone.
+              </p>
+              <p className="mt-4 rounded-sm border border-lux-line-soft bg-lux-canvas/80 px-3 py-2.5 text-center font-mono text-sm tabular-nums text-lux-gold-bright">
+                {stats.leadsFound} lead{stats.leadsFound === 1 ? "" : "s"} will be removed
+              </p>
+              <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-3">
+                <button
+                  type="button"
+                  disabled={deleteAllBusy}
+                  onClick={() => setDeleteAllModalOpen(false)}
+                  className="rounded-sm border border-lux-line bg-lux-canvas px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-lux-muted transition hover:border-lux-gold/35 hover:text-lux-fg disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={deleteAllBusy}
+                  onClick={() => void confirmDeleteAllLeads()}
+                  className="rounded-sm border border-lux-crimson/55 bg-lux-crimson px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-white shadow-[0_8px_28px_-8px_rgba(159,27,61,0.55)] transition hover:bg-lux-crimson/90 disabled:opacity-50"
+                >
+                  {deleteAllBusy ? "Deleting…" : "Delete all"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {runSuccess ? (
+        <div
+          className="fixed bottom-6 left-1/2 z-50 w-[min(24rem,calc(100%-2rem))] -translate-x-1/2 sm:left-auto sm:right-8 sm:translate-x-0"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="overflow-hidden rounded-2xl border border-[color:var(--color-lux-emerald-ring)]/45 bg-lux-panel/95 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.65),0_0_0_1px_rgba(45,212,191,0.12)] ring-1 ring-[color:var(--color-lux-emerald-ring)]/25 backdrop-blur-md">
+            <div
+              className="h-1 w-full bg-gradient-to-r from-lux-teal/20 via-[color:var(--color-lux-emerald-ring)] to-lux-teal/30"
+              aria-hidden
+            />
+            <div className="flex items-start justify-between gap-3 px-5 pb-4 pt-4">
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-lux-teal">Places run</p>
+                <h2 className="mt-1 font-serif text-lg font-semibold tracking-tight text-lux-fg">Run complete</h2>
+                <p className="mt-2 line-clamp-2 font-mono text-[11px] leading-snug text-lux-muted" title={runSuccess.textQuery}>
+                  {runSuccess.textQuery}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={dismissRunSuccess}
+                className="shrink-0 rounded-sm border border-lux-line bg-lux-canvas/80 px-2 py-1 text-xs font-medium text-lux-muted transition hover:border-lux-teal/40 hover:text-lux-fg"
+                aria-label="Dismiss"
+              >
+                ×
+              </button>
+            </div>
+            <dl className="grid grid-cols-3 gap-px border-t border-lux-line-soft bg-lux-line-soft px-2 pb-4 pt-1 text-center">
+              <div className="rounded-sm bg-lux-canvas/90 py-3">
+                <dt className="text-[9px] font-semibold uppercase tracking-wider text-lux-gold-muted">Returned</dt>
+                <dd className="mt-1 font-mono text-lg tabular-nums text-lux-fg">{runSuccess.rawCount}</dd>
+              </div>
+              <div className="rounded-sm bg-lux-canvas/90 py-3">
+                <dt className="text-[9px] font-semibold uppercase tracking-wider text-lux-gold-muted">Matched</dt>
+                <dd className="mt-1 font-mono text-lg tabular-nums text-lux-fg">{runSuccess.matchedCount}</dd>
+              </div>
+              <div className="rounded-sm bg-lux-canvas/90 py-3">
+                <dt className="text-[9px] font-semibold uppercase tracking-wider text-lux-gold-muted">Saved</dt>
+                <dd className="mt-1 font-mono text-lg tabular-nums text-lux-link">{runSuccess.savedCount}</dd>
+              </div>
+            </dl>
+            <p className="border-t border-lux-line-soft px-5 py-2.5 text-center text-[10px] text-lux-muted">
+              Dismisses automatically in 10 seconds.
+            </p>
+          </div>
+        </div>
+      ) : null}
 
       <div className="relative mx-auto max-w-6xl px-4 pb-24 pt-8 sm:px-6 lg:px-8">
         <header className="border-b border-[color:var(--color-lux-gold-line)]/50 pb-8">
@@ -665,6 +861,14 @@ export function MarketingDashboard() {
                   20 per page · newest first · leads come from your Places bot runs
                 </p>
               </div>
+              <button
+                type="button"
+                onClick={() => setDeleteAllModalOpen(true)}
+                disabled={stats.leadsFound === 0}
+                className="rounded-sm border border-lux-crimson/45 bg-lux-crimson-soft/30 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-lux-crimson transition hover:bg-lux-crimson-soft disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Delete all leads
+              </button>
             </div>
             <div className="mt-6 flex flex-col gap-4 rounded-sm border border-lux-line bg-lux-panel/90 p-4 sm:flex-row sm:flex-wrap sm:items-end">
               <label className="block min-w-[200px] flex-1 space-y-1">

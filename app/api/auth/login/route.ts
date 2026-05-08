@@ -1,12 +1,10 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
-import { ensureSeeded } from "@/server/services/seed-defaults";
 import { UserModel } from "@/server/db/models";
 import { createSessionToken, setSessionCookie } from "@/server/auth/session";
 
 export async function POST(req: Request) {
   try {
-    await ensureSeeded();
     const body = (await req.json()) as { username?: string; password?: string };
     const username = body.username?.trim();
     const password = body.password ?? "";

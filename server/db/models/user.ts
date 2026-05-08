@@ -2,10 +2,17 @@ import mongoose, { Schema, type InferSchemaType } from "mongoose";
 
 const userSchema = new Schema(
   {
-    usernameLower: { type: String, required: true, trim: true, lowercase: true, unique: true, index: true },
+    usernameLower: {
+      type: String,
+      required: true,
+      trim: true,
+      lowercase: true,
+      unique: true,
+      index: true,
+    },
     passwordHash: { type: String, required: true },
 
-    // After registration, show a one-time setup reminder (templates + location).
+    // After registration, show a one time setup reminder (templates + location).
     setupCompleted: { type: Boolean, default: false },
   },
   { timestamps: true },
@@ -18,4 +25,3 @@ export type UserDoc = InferSchemaType<typeof userSchema> & {
 export const UserModel =
   (mongoose.models.User as mongoose.Model<UserDoc>) ||
   mongoose.model<UserDoc>("User", userSchema);
-

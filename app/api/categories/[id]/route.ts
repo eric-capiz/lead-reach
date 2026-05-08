@@ -2,14 +2,12 @@ import { NextResponse } from "next/server";
 import mongoose from "mongoose";
 import { CategoryModel } from "@/server/db/models";
 import { requireCurrentUserId } from "@/server/auth/session";
-import { ensureUserSeeded } from "@/server/services/seed-defaults";
 
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function PATCH(req: Request, ctx: Ctx) {
   try {
     const userId = await requireCurrentUserId();
-    await ensureUserSeeded(userId);
     const { id } = await ctx.params;
     if (!mongoose.isValidObjectId(id)) {
       return NextResponse.json({ error: "Invalid id" }, { status: 400 });
@@ -30,7 +28,6 @@ export async function PATCH(req: Request, ctx: Ctx) {
 export async function DELETE(_req: Request, ctx: Ctx) {
   try {
     const userId = await requireCurrentUserId();
-    await ensureUserSeeded(userId);
     const { id } = await ctx.params;
     if (!mongoose.isValidObjectId(id)) {
       return NextResponse.json({ error: "Invalid id" }, { status: 400 });

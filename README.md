@@ -1,36 +1,152 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# LeadReach
 
-## Getting Started
+LeadReach is a private outreach workspace for finding local businesses, qualifying leads, and managing message templates for outreach campaigns.
 
-First, run the development server:
+The app combines:
+- Google Places + Geocoding search runs
+- Per user lead ownership and workflow tracking
+- Reusable email templates and merge fields
+- A polished dashboard for daily outreach operations
+
+## Purpose
+
+LeadReach is designed to help a user quickly:
+- Search by category/name + location
+- Filter leads by website presence
+- Save qualified leads to MongoDB
+- Assign templates and track outreach status
+- Keep all data isolated per account
+
+## Core Features
+
+- **Authentication**
+ - Username/password login and registration
+ - Case insensitive usernames, case sensitive passwords
+ - Passwords stored as bcrypt hashes
+ - Session based auth via secure httpOnly cookie
+ - Post registration setup modal reminder
+
+- **Per user data isolation**
+ - User owned records for:
+ - `leads`
+ - `templates`
+ - `mergefields`
+ - `categories`
+ - `appsettings`
+ - API routes are scoped to the authenticated `userId`
+ - Users cannot read/write each other’s records
+
+- **Lead workflow**
+ - Places run returns, filters, and upserts leads
+ - Duplicate prevention per user (`userId + googlePlaceId`)
+ - Lead card actions:
+ - mark contacted
+ - assign template
+ - copy generated message
+ - delete lead
+ - Bulk delete all leads with confirmation modal
+
+- **Template and merge field management**
+ - Create, edit, delete templates
+ - Styled in app create/delete confirmation modals
+ - Merge fields editable per user
+
+- **Search UX**
+ - Configurable location, radius, and website filter
+ - “Use my location” fills readable location (ZIP or city when available)
+ - ZIP or city or address manual input supported
+ - Run settings persist as “last used” after each bot run
+
+## Tech Stack
+
+- Next.js (App Router)
+- React + TypeScript
+- Mongoose + MongoDB
+- Google Maps APIs:
+ - Places API (New)
+ - Geocoding API
+- Tailwind CSS styling
+
+## Project Structure (high level)
+
+- `app/` pages and API routes
+- `components/dashboard/` dashboard UI and lead/template management
+- `components/auth/` login/register public home
+- `server/db/models/` Mongoose schemas
+- `server/services/` Google Places and geocoding integration
+- `server/auth/` session helpers
+
+## Environment Variables
+
+Copy `.env.example` to `.env.local` and set values:
+
+```env
+MONGODB_URI=
+GOOGLE_MAPS_API_KEY=
+```
+
+Optional (recommended for production):
+
+```env
+AUTH_SECRET=
+```
+
+If `AUTH_SECRET` is not set, the app falls back to a derived secret. For production, set an explicit strong secret.
+
+## Local Development
+
+Install dependencies:
+
+```bash
+npm install
+```
+
+Run the app:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+[http://localhost:3000](http://localhost:3000)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Build check:
 
-## Learn More
+```bash
+npm run build
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Initialization Behavior
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- No automatic demo or sample content is seeded.
+- No automatic bootstrap user is created.
+- On registration, the app creates:
+ - the user account
+ - a minimal per user `appsettings` document
+- Routes assume authenticated users and user owned data (no legacy post hoc seed bootstrap layer).
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Operational Notes
 
-## Deploy on Vercel
+- The Mongo database name (e.g. `test`) is configurable via `MONGODB_URI` and does not affect app behavior.
+- Collection data is intentionally user partitioned by `userId` rather than separate per user collections.
+- All destructive actions (template/lead delete, bulk lead delete) use in app confirmation modals.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Scripts
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- `npm run dev` start local dev server
+- `npm run build` production build + type check
+- `npm run start` run built app
+- `npm run lint` run linting
+- `npm run db:test` Mongo connection test script
+
+## TODO
+
+1. Social scraping
+2. Decide outreach send flow:
+ - keep copy and paste + manual sending, or
+ - let the bot send messages directly
+3. Safeguard Google API usage/pricing before deployment:
+ - confirm current free tier/quotas (estimated ~10,000/month)
+ - enforce limits/alerts
+4. Deploy to Vercel

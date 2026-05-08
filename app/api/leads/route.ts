@@ -2,12 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { LeadModel } from "@/server/db/models";
 import { escapeRegex } from "@/lib/escape-regex";
 import { requireCurrentUserId } from "@/server/auth/session";
-import { ensureUserSeeded } from "@/server/services/seed-defaults";
 
 export async function GET(req: NextRequest) {
   try {
     const userId = await requireCurrentUserId();
-    await ensureUserSeeded(userId);
     const { searchParams } = req.nextUrl;
     const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1);
     const limit = Math.min(50, Math.max(1, parseInt(searchParams.get("limit") || "20", 10) || 20));
@@ -58,7 +56,6 @@ export async function GET(req: NextRequest) {
 export async function DELETE() {
   try {
     const userId = await requireCurrentUserId();
-    await ensureUserSeeded(userId);
     const result = await LeadModel.deleteMany({ userId });
     return NextResponse.json({
       ok: true,

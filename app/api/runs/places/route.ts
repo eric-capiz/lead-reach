@@ -2,12 +2,10 @@ import { NextResponse } from "next/server";
 import { AppSettingsModel, LeadModel, TemplateModel } from "@/server/db/models";
 import { filterByWebsitePreference, geocodeAddress, searchPlacesText } from "@/server/services/places";
 import { requireCurrentUserId } from "@/server/auth/session";
-import { ensureUserSeeded } from "@/server/services/seed-defaults";
 
 export async function POST(req: Request) {
   try {
     const userId = await requireCurrentUserId();
-    await ensureUserSeeded(userId);
     const apiKey = process.env.GOOGLE_MAPS_API_KEY;
     if (!apiKey) {
       return NextResponse.json({ error: "Missing GOOGLE_MAPS_API_KEY" }, { status: 500 });

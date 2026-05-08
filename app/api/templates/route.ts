@@ -1,12 +1,10 @@
 import { NextResponse } from "next/server";
 import { TemplateModel } from "@/server/db/models";
 import { requireCurrentUserId } from "@/server/auth/session";
-import { ensureUserSeeded } from "@/server/services/seed-defaults";
 
 export async function GET() {
   try {
     const userId = await requireCurrentUserId();
-    await ensureUserSeeded(userId);
     const items = await TemplateModel.find({ userId }).sort({ order: 1, name: 1 }).lean();
     return NextResponse.json({ items });
   } catch (e) {
@@ -18,7 +16,6 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const userId = await requireCurrentUserId();
-    await ensureUserSeeded(userId);
     const body = (await req.json()) as {
       name?: string;
       subject?: string;

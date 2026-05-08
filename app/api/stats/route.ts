@@ -1,12 +1,10 @@
 import { NextResponse } from "next/server";
 import { LeadModel } from "@/server/db/models";
 import { requireCurrentUserId } from "@/server/auth/session";
-import { ensureUserSeeded } from "@/server/services/seed-defaults";
 
 export async function GET() {
   try {
     const userId = await requireCurrentUserId();
-    await ensureUserSeeded(userId);
     const [total, noWebsite, emailsFound, socialMatches, messagesSent] = await Promise.all([
       LeadModel.countDocuments({ userId, isSample: { $ne: true } }),
       LeadModel.countDocuments({

@@ -1,12 +1,10 @@
 import { NextResponse } from "next/server";
 import { AppSettingsModel } from "@/server/db/models";
 import { requireCurrentUserId } from "@/server/auth/session";
-import { ensureUserSeeded } from "@/server/services/seed-defaults";
 
 export async function GET() {
   try {
     const userId = await requireCurrentUserId();
-    await ensureUserSeeded(userId);
     const doc = await AppSettingsModel.findOne({ userId }).lean();
     return NextResponse.json({ settings: doc });
   } catch (e) {
@@ -18,7 +16,6 @@ export async function GET() {
 export async function PATCH(req: Request) {
   try {
     const userId = await requireCurrentUserId();
-    await ensureUserSeeded(userId);
     const body = (await req.json()) as {
       locationAddress?: string;
       radiusMiles?: number;

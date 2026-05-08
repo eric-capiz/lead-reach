@@ -37,6 +37,13 @@ export async function PATCH(req: Request, ctx: Ctx) {
     if ("email" in body) patch.email = body.email?.trim() || null;
     if ("instagram" in body) patch.instagram = body.instagram?.trim() || null;
     if ("facebook" in body) patch.facebook = body.facebook?.trim() || null;
+    if ("instagram" in body || "facebook" in body) {
+      console.log("[api/leads PATCH] Social fields", {
+        id,
+        instagram: patch.instagram,
+        facebook: patch.facebook,
+      });
+    }
     if (typeof body.businessName === "string") patch.businessName = body.businessName.trim();
     if (typeof body.category === "string") patch.category = body.category.trim();
     if (typeof body.phone === "string") patch.phone = body.phone.trim();

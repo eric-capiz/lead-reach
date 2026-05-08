@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCurrentUserId } from "@/server/auth/session";
+import { getGoogleApiKey } from "@/server/lib/google-api-key";
 
 type GeocodeResponse = {
   status: string;
@@ -17,9 +18,9 @@ type GeocodeResponse = {
 export async function GET(req: NextRequest) {
   try {
     await requireCurrentUserId();
-    const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+    const apiKey = getGoogleApiKey();
     if (!apiKey) {
-      return NextResponse.json({ error: "Missing GOOGLE_MAPS_API_KEY" }, { status: 500 });
+      return NextResponse.json({ error: "Missing GOOGLE_API_KEY" }, { status: 500 });
     }
 
     const lat = Number(req.nextUrl.searchParams.get("lat"));

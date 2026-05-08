@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import { LeadModel } from "@/server/db/models";
 import { requireCurrentUserId } from "@/server/auth/session";
+import { leadNeedsSocialEnrichment } from "@/server/lib/lead-socials";
 
 export async function GET() {
   try {
     const userId = await requireCurrentUserId();
-    const [total, noWebsite, emailsFound, socialMatches, messagesSent] = await Promise.all([
+    const [total, noWebsite, emailsFound, socialMatches, messagesSent, leadSocialSlice] = await Promise.all([
       LeadModel.countDocuments({ userId, isSample: { $ne: true } }),
       LeadModel.countDocuments({
         userId,
@@ -30,7 +31,11 @@ export async function GET() {
         ],
       }),
       LeadModel.countDocuments({ userId, isSample: { $ne: true }, status: "sent" }),
+      LeadModel.find({ userId, isSample: { $ne: true } })
+        .select({ facebook: 1, instagram: 1, businessName: 1, location: 1 })
+        .lean(),
     ]);
+    const leadsNeedingSocials = leadSocialSlice.filter(leadNeedsSocialEnrichment).length;
     return NextResponse.json({
       stats: {
         leadsFound: total,
@@ -38,6 +43,7 @@ export async function GET() {
         emailsFound,
         socialMatches,
         messagesSent,
+        leadsNeedingSocials,
       },
     });
   } catch (e) {

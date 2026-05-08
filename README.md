@@ -82,7 +82,7 @@ Copy `.env.example` to `.env.local` and set values:
 
 ```env
 MONGODB_URI=
-GOOGLE_MAPS_API_KEY=
+GOOGLE_API_KEY=
 ```
 
 Optional (recommended for production):

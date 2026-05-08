@@ -2,13 +2,14 @@ import { NextResponse } from "next/server";
 import { AppSettingsModel, LeadModel, TemplateModel } from "@/server/db/models";
 import { filterByWebsitePreference, geocodeAddress, searchPlacesText } from "@/server/services/places";
 import { requireCurrentUserId } from "@/server/auth/session";
+import { getGoogleApiKey } from "@/server/lib/google-api-key";
 
 export async function POST(req: Request) {
   try {
     const userId = await requireCurrentUserId();
-    const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+    const apiKey = getGoogleApiKey();
     if (!apiKey) {
-      return NextResponse.json({ error: "Missing GOOGLE_MAPS_API_KEY" }, { status: 500 });
+      return NextResponse.json({ error: "Missing GOOGLE_API_KEY" }, { status: 500 });
     }
 
     const body = (await req.json()) as {

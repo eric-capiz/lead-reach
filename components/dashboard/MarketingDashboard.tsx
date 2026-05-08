@@ -18,6 +18,14 @@ type SettingsRow = {
   websiteFilter: WebsiteFilter;
 };
 
+type LeadsApiResponse = {
+  items: Record<string, unknown>[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+};
+
 const statAccentColors = [
   "var(--color-lux-gold)",
   "var(--color-lux-crimson)",
@@ -67,6 +75,7 @@ function normalizeLead(raw: Record<string, unknown>): LeadApi {
     templateId,
     templateName: (raw.templateName as string | null) ?? null,
     updatedAt: raw.updatedAt ? String(raw.updatedAt) : "",
+    isSample: raw.isSample === true,
   };
 }
 
@@ -93,6 +102,12 @@ export function MarketingDashboard() {
   const [templates, setTemplates] = useState<TemplateLite[]>([]);
   const [mergeFields, setMergeFields] = useState<MergeFieldLite[]>([]);
   const [leads, setLeads] = useState<LeadApi[]>([]);
+  const [leadsPage, setLeadsPage] = useState(1);
+  const [leadsTotal, setLeadsTotal] = useState(0);
+  const [leadsTotalPages, setLeadsTotalPages] = useState(1);
+  const [leadsSearchDraft, setLeadsSearchDraft] = useState("");
+  const [leadsSearchQuery, setLeadsSearchQuery] = useState("");
+  const [leadsSort, setLeadsSort] = useState<"new" | "old">("new");
   const [stats, setStats] = useState({
     leadsFound: 0,
     noWebsite: 0,
@@ -112,60 +127,72 @@ export function MarketingDashboard() {
   const [newMergeLabel, setNewMergeLabel] = useState("");
   const [newMergeValue, setNewMergeValue] = useState("");
 
-  const refresh = useCallback(
-    async (options?: { forceTemplateSync?: boolean }) => {
-      const ignoreTplDirty = options?.forceTemplateSync === true;
-    const [c, s, t, m, l, st] = await Promise.all([
-      apiJson<{ items: CategoryRow[] }>("/api/categories"),
-      apiJson<{ settings: SettingsRow | null }>("/api/settings"),
-      apiJson<{ items: Record<string, unknown>[] }>("/api/templates"),
-      apiJson<{ items: MergeFieldLite[] }>("/api/merge-fields"),
-      apiJson<{ items: Record<string, unknown>[] }>("/api/leads"),
-      apiJson<{
-        stats: {
-          leadsFound: number;
-          noWebsite: number;
-          emailsFound: number;
-          socialMatches: number;
-          messagesSent: number;
-        };
-      }>("/api/stats"),
-    ]);
+  const loadLeads = useCallback(async (page: number, search: string, sort: "new" | "old") => {
+    const q = new URLSearchParams({ page: String(page), limit: "20", sort });
+    if (search) q.set("search", search);
+    const res = await apiJson<LeadsApiResponse>(`/api/leads?${q}`);
+    setLeadsPage(page);
+    setLeadsSearchQuery(search);
+    setLeadsSort(sort);
+    setLeads(res.items.map((x) => normalizeLead(x)));
+    setLeadsTotal(res.total);
+    setLeadsTotalPages(res.totalPages);
+  }, []);
 
-    setCategories(c.items);
-    if (s.settings) {
-      setLocDraft(s.settings.locationAddress);
-      setRadiusDraft(s.settings.radiusMiles);
-      setFilterDraft(s.settings.websiteFilter);
-    }
-    const tItems = t.items.map((row) => ({
-      _id: String(row._id),
-      name: String(row.name),
-      subject: String(row.subject ?? ""),
-      body: String(row.body ?? ""),
-    }));
-    setTemplates(tItems);
-    const templateLocked = tplDirty && !ignoreTplDirty;
-    if (!templateLocked && tItems.length) {
-      let pickId = selectedTplId;
-      if (!pickId || !tItems.some((x) => x._id === pickId)) pickId = tItems[0]!._id;
-      const row = tItems.find((x) => x._id === pickId)!;
-      setSelectedTplId(row._id);
-      setTplName(row.name);
-      setTplSubject(row.subject);
-      setTplBody(row.body);
-    } else if (!tItems.length) {
-      setSelectedTplId(null);
-      setTplName("");
-      setTplSubject("");
-      setTplBody("");
-    }
-    setMergeFields(m.items);
-    setLeads(l.items.map((x) => normalizeLead(x)));
-    setStats(st.stats);
-  },
-  [tplDirty, selectedTplId],
-);
+  const refresh = useCallback(
+    async (options?: { forceTemplateSync?: boolean; resetLeadsPage?: number }) => {
+      const ignoreTplDirty = options?.forceTemplateSync === true;
+      const [c, s, t, m, st] = await Promise.all([
+        apiJson<{ items: CategoryRow[] }>("/api/categories"),
+        apiJson<{ settings: SettingsRow | null }>("/api/settings"),
+        apiJson<{ items: Record<string, unknown>[] }>("/api/templates"),
+        apiJson<{ items: MergeFieldLite[] }>("/api/merge-fields"),
+        apiJson<{
+          stats: {
+            leadsFound: number;
+            noWebsite: number;
+            emailsFound: number;
+            socialMatches: number;
+            messagesSent: number;
+          };
+        }>("/api/stats"),
+      ]);
+
+      setCategories(c.items);
+      if (s.settings) {
+        setLocDraft(s.settings.locationAddress);
+        setRadiusDraft(s.settings.radiusMiles);
+        setFilterDraft(s.settings.websiteFilter);
+      }
+      const tItems = t.items.map((row) => ({
+        _id: String(row._id),
+        name: String(row.name),
+        subject: String(row.subject ?? ""),
+        body: String(row.body ?? ""),
+      }));
+      setTemplates(tItems);
+      const templateLocked = tplDirty && !ignoreTplDirty;
+      if (!templateLocked && tItems.length) {
+        let pickId = selectedTplId;
+        if (!pickId || !tItems.some((x) => x._id === pickId)) pickId = tItems[0]!._id;
+        const row = tItems.find((x) => x._id === pickId)!;
+        setSelectedTplId(row._id);
+        setTplName(row.name);
+        setTplSubject(row.subject);
+        setTplBody(row.body);
+      } else if (!tItems.length) {
+        setSelectedTplId(null);
+        setTplName("");
+        setTplSubject("");
+        setTplBody("");
+      }
+      setMergeFields(m.items);
+      setStats(st.stats);
+      const page = options?.resetLeadsPage ?? leadsPage;
+      await loadLeads(page, leadsSearchQuery, leadsSort);
+    },
+    [tplDirty, selectedTplId, leadsPage, leadsSearchQuery, leadsSort, loadLeads],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -239,7 +266,7 @@ export function MarketingDashboard() {
           websiteFilter: filterDraft,
         }),
       });
-      await refresh();
+      await refresh({ resetLeadsPage: 1 });
       window.alert(
         `Run complete.\nQuery: ${res.textQuery}\nPlaces returned: ${res.rawCount}\nAfter website filter: ${res.matchedCount}\nUpserted leads: ${res.savedCount}`,
       );
@@ -368,17 +395,6 @@ export function MarketingDashboard() {
     await apiJson(`/api/leads/${leadId}`, {
       method: "PATCH",
       body: JSON.stringify({ status }),
-    });
-    await refresh();
-  };
-
-  const onContactPatch = async (
-    leadId: string,
-    patch: { email?: string | null; instagram?: string | null; facebook?: string | null },
-  ) => {
-    await apiJson(`/api/leads/${leadId}`, {
-      method: "PATCH",
-      body: JSON.stringify(patch),
     });
     await refresh();
   };
@@ -645,8 +661,73 @@ export function MarketingDashboard() {
             <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
               <div>
                 <h2 className="font-serif text-2xl font-semibold text-lux-fg">Leads</h2>
-                <p className="text-xs text-lux-muted">Stored in MongoDB · up to 20 new matches per Places run</p>
+                <p className="text-xs text-lux-muted">
+                  20 per page · newest first · leads come from your Places bot runs
+                </p>
               </div>
+            </div>
+            <div className="mt-6 flex flex-col gap-4 rounded-sm border border-lux-line bg-lux-panel/90 p-4 sm:flex-row sm:flex-wrap sm:items-end">
+              <label className="block min-w-[200px] flex-1 space-y-1">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-lux-gold-muted">
+                  Search by business name
+                </span>
+                <input
+                  value={leadsSearchDraft}
+                  onChange={(e) => setLeadsSearchDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void loadLeads(1, leadsSearchDraft.trim(), leadsSort);
+                    }
+                  }}
+                  placeholder="Type and press Enter or Search"
+                  className="w-full rounded-sm border border-lux-line bg-lux-field px-3 py-2 text-sm outline-none focus:border-lux-gold"
+                />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-lux-teal">Sort by date</span>
+                <select
+                  value={leadsSort}
+                  onChange={(e) => {
+                    const v = e.target.value === "old" ? "old" : "new";
+                    void loadLeads(1, leadsSearchQuery, v);
+                  }}
+                  className="w-full min-w-[180px] cursor-pointer rounded-sm border border-lux-line bg-lux-field px-3 py-2 text-xs outline-none sm:w-auto"
+                >
+                  <option value="new">New → old</option>
+                  <option value="old">Old → new</option>
+                </select>
+              </label>
+              <button
+                type="button"
+                onClick={() => void loadLeads(1, leadsSearchDraft.trim(), leadsSort)}
+                className="rounded-sm bg-lux-primary px-5 py-2 text-xs font-semibold text-lux-primary-fg"
+              >
+                Search
+              </button>
+            </div>
+            <p className="mt-3 text-[10px] uppercase tracking-wider text-lux-subtle">
+              {leadsTotal === 0
+                ? "No leads match this filter."
+                : `Showing ${(leadsPage - 1) * 20 + 1}–${Math.min(leadsPage * 20, leadsTotal)} of ${leadsTotal} · page ${leadsPage} / ${leadsTotalPages}`}
+            </p>
+            <div className="mt-6 flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={leadsPage <= 1}
+                onClick={() => void loadLeads(leadsPage - 1, leadsSearchQuery, leadsSort)}
+                className="rounded-sm border border-lux-line bg-lux-canvas px-4 py-2 text-xs font-semibold text-lux-fg-dim disabled:opacity-40"
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                disabled={leadsPage >= leadsTotalPages}
+                onClick={() => void loadLeads(leadsPage + 1, leadsSearchQuery, leadsSort)}
+                className="rounded-sm border border-lux-line bg-lux-canvas px-4 py-2 text-xs font-semibold text-lux-fg-dim disabled:opacity-40"
+              >
+                Next
+              </button>
             </div>
             <div className="mt-8 grid gap-5 sm:grid-cols-2">
               {leads.map((row) => (
@@ -657,12 +738,11 @@ export function MarketingDashboard() {
                   mergeFields={mergeFields}
                   onTemplateChange={onTemplateChange}
                   onStatusChange={onStatusChange}
-                  onContactPatch={onContactPatch}
                   onDelete={onDeleteLead}
                 />
               ))}
               {!leads.length && (
-                <p className="col-span-full text-sm text-lux-muted">No leads yet. Run a search from Overview.</p>
+                <p className="col-span-full text-sm text-lux-muted">No leads match this page or filter.</p>
               )}
             </div>
           </div>
@@ -770,7 +850,8 @@ export function MarketingDashboard() {
                 <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-lux-crimson">Merge fields</p>
                 <p className="mt-1 text-[10px] uppercase tracking-widest text-lux-subtle">
                   Keys are lowercased. Use in templates as {"{{key}}"}. Business fields: {"{{businessName}}"}{" "}
-                  {"{{category}}"}.
+                  {"{{category}}"}. Owner fields include {"{{email}}"}, {"{{phone}}"}, {"{{portfoliolink}}"},{" "}
+                  {"{{linkedinlink}}"}, {"{{myname}}"}. Put project URLs directly in the template body if you like.
                 </p>
                 <ul className="mt-6 space-y-4">
                   {mergeFields.map((mf) => (

@@ -17,7 +17,6 @@ export function LeadCard({
   mergeFields,
   onTemplateChange,
   onStatusChange,
-  onContactPatch,
   onDelete,
 }: {
   row: LeadApi;
@@ -25,16 +24,9 @@ export function LeadCard({
   mergeFields: MergeFieldLite[];
   onTemplateChange: (id: string, templateId: string) => Promise<void>;
   onStatusChange: (id: string, status: LeadStatus) => Promise<void>;
-  onContactPatch: (
-    id: string,
-    patch: { email?: string | null; instagram?: string | null; facebook?: string | null },
-  ) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
-  const [email, setEmail] = useState(row.email ?? "");
-  const [ig, setIg] = useState(row.instagram ?? "");
-  const [fb, setFb] = useState(row.facebook ?? "");
 
   const tpl = useMemo(
     () => templates.find((t) => t._id === row.templateId) ?? templates[0],
@@ -81,17 +73,24 @@ export function LeadCard({
             {row.category} · {row.location}
           </p>
         </div>
-        <span
-          className={`shrink-0 rounded-sm px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.15em] ${
-            done
-              ? "border border-[color:var(--color-lux-emerald-ring)] bg-lux-emerald-soft/80 text-lux-done-fg"
-              : social
-                ? "border border-[color:var(--color-lux-rose-ring)] bg-lux-rose-soft/90 text-lux-social-fg"
-                : "border border-[color:var(--color-lux-gold-line)] bg-lux-gold-soft text-lux-gold-bright"
-          }`}
-        >
-          {statusLabel(row.status)}
-        </span>
+        <div className="flex flex-wrap items-start justify-end gap-2">
+          {row.isSample ? (
+            <span className="shrink-0 rounded-sm border border-lux-teal/40 bg-lux-teal/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-lux-link">
+              Sample
+            </span>
+          ) : null}
+          <span
+            className={`shrink-0 rounded-sm px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.15em] ${
+              done
+                ? "border border-[color:var(--color-lux-emerald-ring)] bg-lux-emerald-soft/80 text-lux-done-fg"
+                : social
+                  ? "border border-[color:var(--color-lux-rose-ring)] bg-lux-rose-soft/90 text-lux-social-fg"
+                  : "border border-[color:var(--color-lux-gold-line)] bg-lux-gold-soft text-lux-gold-bright"
+            }`}
+          >
+            {statusLabel(row.status)}
+          </span>
+        </div>
       </div>
 
       <dl className="mt-4 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
@@ -103,53 +102,34 @@ export function LeadCard({
             {row.websiteStatus}
           </span>
         </div>
-        <div className="col-span-2 space-y-1">
+        <div className="col-span-2 text-lux-muted">
           <span className="text-lux-subtle">Email </span>
-          <input
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            onBlur={() => {
-              const v = email.trim() || null;
-              if (v !== (row.email ?? null)) void onContactPatch(row._id, { email: v });
-            }}
-            className="ml-1 w-full min-w-0 rounded-sm border border-lux-line bg-lux-field px-2 py-1 font-mono text-[11px] text-lux-fg-dim outline-none focus:border-lux-gold"
-            placeholder="Add email"
-          />
-        </div>
-        <div className="col-span-2 space-y-1">
-          <span className="text-lux-subtle">Instagram URL </span>
-          <input
-            value={ig}
-            onChange={(e) => setIg(e.target.value)}
-            onBlur={() => {
-              const v = ig.trim() || null;
-              if (v !== (row.instagram ?? null)) void onContactPatch(row._id, { instagram: v });
-            }}
-            className="ml-1 w-full rounded-sm border border-lux-line bg-lux-field px-2 py-1 font-mono text-[11px] outline-none focus:border-lux-gold"
-            placeholder="https://…"
-          />
-        </div>
-        <div className="col-span-2 space-y-1">
-          <span className="text-lux-subtle">Facebook URL </span>
-          <input
-            value={fb}
-            onChange={(e) => setFb(e.target.value)}
-            onBlur={() => {
-              const v = fb.trim() || null;
-              if (v !== (row.facebook ?? null)) void onContactPatch(row._id, { facebook: v });
-            }}
-            className="ml-1 w-full rounded-sm border border-lux-line bg-lux-field px-2 py-1 font-mono text-[11px] outline-none focus:border-lux-gold"
-            placeholder="https://…"
-          />
+          {row.email ? (
+            <a href={`mailto:${row.email}`} className="font-mono text-[11px] text-lux-link hover:text-lux-link-hover">
+              {row.email}
+            </a>
+          ) : (
+            <span className="font-mono text-[11px] text-lux-fg-dim">—</span>
+          )}
         </div>
         <div className="col-span-2 flex flex-wrap gap-3 text-[11px]">
-          <a href={row.googleMapsUrl} className="font-medium text-lux-link transition hover:text-lux-link-hover">
+          <a
+            href={row.googleMapsUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-lux-link transition hover:text-lux-link-hover"
+          >
             Maps ↗
           </a>
           <span className="text-lux-subtle">
             IG:{" "}
             {row.instagram?.startsWith("http") ? (
-              <a href={row.instagram} className="font-medium text-lux-link transition hover:text-lux-link-hover">
+              <a
+                href={row.instagram}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium text-lux-link transition hover:text-lux-link-hover"
+              >
                 open
               </a>
             ) : row.instagram ? (
@@ -161,7 +141,12 @@ export function LeadCard({
           <span className="text-lux-subtle">
             FB:{" "}
             {row.facebook?.startsWith("http") ? (
-              <a href={row.facebook} className="font-medium text-lux-link transition hover:text-lux-link-hover">
+              <a
+                href={row.facebook}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium text-lux-link transition hover:text-lux-link-hover"
+              >
                 open
               </a>
             ) : row.facebook ? (

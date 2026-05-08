@@ -58,7 +58,7 @@ export async function POST(req: Request) {
     for (const p of filtered) {
       const websiteUri = p.websiteUri;
       const websiteStatus = websiteUri ? "Has website" : "No website";
-      const setOnInsert: Record<string, unknown> = { googlePlaceId: p.googlePlaceId };
+      const setOnInsert: Record<string, unknown> = {};
       if (defaultTemplateId) setOnInsert.templateId = defaultTemplateId;
       const doc = await LeadModel.findOneAndUpdate(
         { googlePlaceId: p.googlePlaceId },
@@ -71,12 +71,17 @@ export async function POST(req: Request) {
             websiteUri,
             websiteStatus,
             googleMapsUrl: p.googleMapsUrl,
+            isSample: false,
           },
           $setOnInsert: setOnInsert,
         },
         { upsert: true, new: true, setDefaultsOnInsert: true },
       );
       saved.push(String(doc!._id));
+    }
+
+    if (saved.length > 0) {
+      await LeadModel.deleteMany({ isSample: true });
     }
 
     return NextResponse.json({

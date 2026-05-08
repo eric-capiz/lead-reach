@@ -19,6 +19,7 @@ const leadSchema = new Schema(
       enum: ["sent", "pending", "social_ready"],
       default: "pending",
     },
+    isSample: { type: Boolean, default: false },
   },
   { timestamps: true },
 );

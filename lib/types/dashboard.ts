@@ -15,6 +15,7 @@ export type LeadApi = {
   templateId: string | null;
   templateName?: string | null;
   updatedAt?: string;
+  isSample?: boolean;
 };
 
 export type TemplateLite = { _id: string; name: string; body: string; subject: string };

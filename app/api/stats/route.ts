@@ -2,12 +2,15 @@ import { NextResponse } from "next/server";
 import { ensureAppData } from "@/server/ensure-app-data";
 import { LeadModel } from "@/server/db/models";
 
+const realOnly = { isSample: { $ne: true } } as const;
+
 export async function GET() {
   try {
     await ensureAppData();
     const [total, noWebsite, emailsFound, socialMatches, messagesSent] = await Promise.all([
-      LeadModel.countDocuments(),
+      LeadModel.countDocuments(realOnly),
       LeadModel.countDocuments({
+        ...realOnly,
         $or: [
           { websiteStatus: "No website" },
           { websiteUri: null },
@@ -15,15 +18,17 @@ export async function GET() {
         ],
       }),
       LeadModel.countDocuments({
+        ...realOnly,
         email: { $type: "string", $regex: /\S/ },
       }),
       LeadModel.countDocuments({
+        ...realOnly,
         $or: [
           { instagram: { $nin: [null, ""] } },
           { facebook: { $nin: [null, ""] } },
         ],
       }),
-      LeadModel.countDocuments({ status: "sent" }),
+      LeadModel.countDocuments({ ...realOnly, status: "sent" }),
     ]);
     return NextResponse.json({
       stats: {

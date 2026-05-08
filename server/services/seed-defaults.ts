@@ -2,9 +2,11 @@ import { connectDB } from "@/server/db/connect";
 import {
   AppSettingsModel,
   CategoryModel,
+  LeadModel,
   MergeFieldModel,
   TemplateModel,
 } from "@/server/db/models";
+import { syncOwnerMergeFieldsAndCleanup } from "@/server/services/sync-owner-merge-fields";
 
 const DEFAULT_CATEGORIES = [
   "Barbers",
@@ -17,10 +19,10 @@ const DEFAULT_CATEGORIES = [
 
 const DEFAULT_MERGE_FIELDS = [
   { key: "myname", label: "Your name", value: "Eric Capiz" },
-  { key: "phone", label: "Phone", value: "(555) 010-4421" },
-  { key: "portfoliolink", label: "Portfolio URL", value: "https://portfolio.example.com/eric-capiz" },
+  { key: "phone", label: "Phone", value: "443-307-3937" },
+  { key: "email", label: "Email", value: "ericcapiz@gmail.com" },
+  { key: "portfoliolink", label: "Portfolio URL", value: "https://ericcapiz.com" },
   { key: "linkedinlink", label: "LinkedIn URL", value: "https://linkedin.com/in/eric-capiz" },
-  { key: "sampleprojectlink", label: "Sample project URL", value: "https://demo.example.com/barber-booking" },
 ];
 
 const DEFAULT_TEMPLATES: { name: string; subject: string; body: string; categoryTag: string; order: number }[] = [
@@ -33,7 +35,6 @@ const DEFAULT_TEMPLATES: { name: string; subject: string; body: string; category
 
 I'm {{myName}}. I build booking-ready sites for barbershops.
 
-Sample booking flow: {{sampleProjectLink}}
 Portfolio: {{portfolioLink}}
 
 Happy to sketch something for your shop.
@@ -48,7 +49,6 @@ Happy to sketch something for your shop.
 
 {{myName}} here. Landing pages that showcase menus and pickup windows.
 
-Live bakery demo: {{sampleProjectLink}}
 Work: {{portfolioLink}}
 
 {{phone}}`,
@@ -62,7 +62,7 @@ Work: {{portfolioLink}}
 
 I'm {{myName}}. Florists thrive when seasonal galleries read effortlessly.
 
-{{portfolioLink}} · {{sampleProjectLink}}
+{{portfolioLink}}
 
 {{linkedinLink}} · {{phone}}`,
   },
@@ -76,7 +76,6 @@ I'm {{myName}}. Florists thrive when seasonal galleries read effortlessly.
 {{myName}} · small-business websites & light booking flows.
 
 {{portfolioLink}}
-{{sampleProjectLink}}
 {{linkedinLink}} · {{phone}}`,
   },
 ];
@@ -102,7 +101,11 @@ export async function ensureSeeded(): Promise<void> {
     await MergeFieldModel.insertMany(DEFAULT_MERGE_FIELDS);
   }
 
+  await syncOwnerMergeFieldsAndCleanup();
+
   if ((await TemplateModel.countDocuments()) === 0) {
     await TemplateModel.insertMany(DEFAULT_TEMPLATES);
   }
+
+  await LeadModel.deleteMany({ isSample: true });
 }

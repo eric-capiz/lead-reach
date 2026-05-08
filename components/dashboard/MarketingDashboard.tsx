@@ -1,18 +1,22 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import {
-  APP_NAME,
-  categories,
-  emailTemplateLibrary,
-  leadRows,
-  ownerPlaceholders,
-  stats,
-  templateOptions,
-  type LeadRow,
-} from "@/lib/dashboard-dummy";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { APP_NAME } from "@/lib/constants";
+import type { LeadStatus, WebsiteFilter } from "@/lib/constants";
+import { applyMergeTemplate, buildMergeMap } from "@/lib/merge";
+import { LeadCard } from "./LeadCard";
+import type { LeadApi, MergeFieldLite, TemplateLite } from "@/lib/types/dashboard";
 
 type TabId = "overview" | "leads" | "templates";
+
+type CategoryRow = { _id: string; name: string; order: number };
+
+type SettingsRow = {
+  _id: string;
+  locationAddress: string;
+  radiusMiles: number;
+  websiteFilter: WebsiteFilter;
+};
 
 const statAccentColors = [
   "var(--color-lux-gold)",
@@ -25,212 +29,389 @@ const statAccentColors = [
 const gridBg =
   "linear-gradient(rgba(201,162,39,0.04)_1px,transparent_1px),linear-gradient(90deg,rgba(201,162,39,0.04)_1px,transparent_1px)";
 
-function templateBody(
-  templateName: (typeof templateOptions)[number],
-  o: typeof ownerPlaceholders,
-) {
-  const lines: Record<(typeof templateOptions)[number], string[]> = {
-    "Barber Website Pitch": [
-      `Hi {{businessName}},`,
-      "",
-      `I'm ${o.ownerName}. I build booking-ready sites for barbershops—clean, fast, mobile-first.`,
-      "",
-      `Sample booking flow: ${o.sampleProjectLink}`,
-      `Portfolio: ${o.portfolioLink}`,
-      "",
-      `Happy to sketch something for your shop.`,
-      `${o.phone} · ${o.linkedIn}`,
-    ],
-    "Bakery Website Pitch": [
-      `Hello {{businessName}},`,
-      "",
-      `${o.ownerName} here—I craft landing pages that showcase menus and pickup windows.`,
-      "",
-      `Live bakery demo: ${o.sampleProjectLink}`,
-      `Work: ${o.portfolioLink}`,
-      "",
-      `${o.phone}`,
-    ],
-    "Florist Website Pitch": [
-      `Hi {{businessName}},`,
-      "",
-      `I'm ${o.ownerName}. Florists thrive when seasonal galleries and delivery zones read effortlessly.`,
-      "",
-      `${o.portfolioLink} · ${o.sampleProjectLink}`,
-      "",
-      `${o.linkedIn} · ${o.phone}`,
-    ],
-    "General Small Business Pitch": [
-      `Hi {{businessName}},`,
-      "",
-      `${o.ownerName} · small-business websites & light booking flows.`,
-      "",
-      `${o.portfolioLink}`,
-      `${o.sampleProjectLink}`,
-      `${o.linkedIn} · ${o.phone}`,
-    ],
-  };
-  return lines[templateName].join("\n");
-}
-
-function TemplatePreviewBody({ templateName }: { templateName: (typeof templateOptions)[number] }) {
-  const body = useMemo(
-    () => templateBody(templateName, ownerPlaceholders),
-    [templateName],
-  );
-  return (
-    <pre className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-lux-muted">
-      {body}
-    </pre>
-  );
-}
-
-function statusLabel(s: LeadRow["status"]) {
-  if (s === "sent") return "Contacted";
-  if (s === "social_ready") return "Social ready";
-  return "Pending";
-}
-
-function LeadCard({
-  row,
-  onTemplateChange,
-}: {
-  row: LeadRow;
-  onTemplateChange: (id: string, t: (typeof templateOptions)[number]) => void;
-}) {
-  const done = row.status === "sent";
-  const social = row.status === "social_ready";
-
-  return (
-    <article
-      className={`group relative flex flex-col rounded-2xl border p-5 transition ${
-        done
-          ? "border-[color:var(--color-lux-emerald-ring)] bg-gradient-to-br from-lux-emerald-soft to-lux-panel shadow-[0_18px_48px_-16px_rgba(0,0,0,0.55)] ring-1 ring-[color:var(--color-lux-gold-line)]/40"
-          : social
-            ? "border-[color:var(--color-lux-rose-ring)] bg-gradient-to-br from-lux-rose-soft to-lux-panel shadow-[0_18px_48px_-16px_rgba(0,0,0,0.55)] ring-1 ring-[color:var(--color-lux-gold-line)]/35"
-            : "border-lux-line bg-lux-panel shadow-[0_1px_0_var(--color-lux-rim)_inset,0_20px_50px_-18px_rgba(0,0,0,0.5)] ring-1 ring-[color:var(--color-lux-gold-line)]/15 hover:ring-[color:var(--color-lux-gold-line)]/35"
-      }`}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="font-serif text-lg font-semibold tracking-tight text-lux-fg">{row.businessName}</h3>
-          <p className="mt-0.5 text-xs text-lux-muted">
-            {row.category} · {row.location}
-          </p>
-        </div>
-        <span
-          className={`shrink-0 rounded-sm px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.15em] ${
-            done
-              ? "border border-[color:var(--color-lux-emerald-ring)] bg-lux-emerald-soft/80 text-lux-done-fg"
-              : social
-                ? "border border-[color:var(--color-lux-rose-ring)] bg-lux-rose-soft/90 text-lux-social-fg"
-                : "border border-[color:var(--color-lux-gold-line)] bg-lux-gold-soft text-lux-gold-bright"
-          }`}
-        >
-          {statusLabel(row.status)}
-        </span>
-      </div>
-
-      <dl className="mt-4 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
-        <div className="col-span-2 flex flex-wrap gap-2">
-          <span className="rounded-sm border border-[color:var(--color-lux-gold-line)]/30 bg-lux-gold-soft px-2 py-1 font-mono text-[11px] text-lux-gold-bright">
-            {row.phone}
-          </span>
-          <span className="rounded-sm border border-[color:var(--color-lux-crimson)]/25 bg-lux-crimson-soft px-2 py-1 text-[11px] font-medium text-lux-fg">
-            {row.websiteStatus}
-          </span>
-        </div>
-        <div className="col-span-2 text-lux-muted">
-          <span className="text-lux-subtle">Email </span>
-          {row.email ?? "—"}
-        </div>
-        <div className="col-span-2 flex flex-wrap gap-3 text-[11px]">
-          <a href={row.googleMapsUrl} className="font-medium text-lux-link transition hover:text-lux-link-hover">
-            Maps ↗
-          </a>
-          <span className="text-lux-subtle">
-            IG:{" "}
-            {row.instagram ? (
-              row.instagram.startsWith("http") ? (
-                <a href={row.instagram} className="font-medium text-lux-link transition hover:text-lux-link-hover">
-                  open
-                </a>
-              ) : (
-                <span className="font-medium text-lux-gold-bright">{row.instagram}</span>
-              )
-            ) : (
-              "—"
-            )}
-          </span>
-          <span className="text-lux-subtle">
-            FB:{" "}
-            {row.facebook ? (
-              row.facebook.startsWith("http") ? (
-                <a href={row.facebook} className="font-medium text-lux-link transition hover:text-lux-link-hover">
-                  open
-                </a>
-              ) : (
-                <span className="font-medium text-lux-gold-bright">{row.facebook}</span>
-              )
-            ) : (
-              "—"
-            )}
-          </span>
-        </div>
-      </dl>
-
-      <div className="mt-5 flex flex-col gap-3 border-t border-lux-line-soft pt-4 sm:flex-row sm:items-center">
-        <select
-          value={row.template}
-          onChange={(e) =>
-            onTemplateChange(row.id, e.target.value as (typeof templateOptions)[number])
-          }
-          className="min-w-0 flex-1 cursor-pointer rounded-sm border border-lux-line bg-lux-field px-3 py-2 text-xs text-lux-fg-dim outline-none transition focus:border-lux-gold focus:ring-1 focus:ring-lux-gold-soft"
-        >
-          {templateOptions.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </select>
-        <button
-          type="button"
-          className="rounded-sm bg-lux-primary px-4 py-2 text-xs font-semibold tracking-wide text-lux-primary-fg shadow-[0_6px_24px_-6px_rgba(201,162,39,0.45)] transition hover:bg-lux-primary-hover"
-        >
-          Send
-        </button>
-      </div>
-    </article>
-  );
-}
-
 const tabs: { id: TabId; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "leads", label: "Leads table" },
   { id: "templates", label: "Email templates" },
 ];
 
-const statRows = [
-  { label: "Leads found", value: stats.leadsFound },
-  { label: "No website", value: stats.noWebsite },
-  { label: "Emails found", value: stats.emailsFound },
-  { label: "Social matches", value: stats.socialMatches },
-  { label: "Messages sent", value: stats.messagesSent },
-] as const;
+async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const r = await fetch(path, {
+    ...init,
+    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+  });
+  const j = (await r.json()) as T & { error?: string };
+  if (!r.ok) throw new Error((j as { error?: string }).error || r.statusText);
+  return j;
+}
+
+function normalizeLead(raw: Record<string, unknown>): LeadApi {
+  let templateId: string | null = null;
+  const tp = raw.templateId;
+  if (tp && typeof tp === "object" && "_id" in (tp as object)) {
+    templateId = String((tp as { _id: unknown })._id);
+  } else if (typeof tp === "string") templateId = tp;
+
+  return {
+    _id: String(raw._id),
+    businessName: String(raw.businessName ?? ""),
+    category: String(raw.category ?? ""),
+    location: String(raw.location ?? ""),
+    phone: String(raw.phone ?? ""),
+    email: (raw.email as string | null) ?? null,
+    websiteStatus: String(raw.websiteStatus ?? ""),
+    googleMapsUrl: String(raw.googleMapsUrl ?? ""),
+    instagram: (raw.instagram as string | null) ?? null,
+    facebook: (raw.facebook as string | null) ?? null,
+    status: raw.status as LeadStatus,
+    templateId,
+    templateName: (raw.templateName as string | null) ?? null,
+    updatedAt: raw.updatedAt ? String(raw.updatedAt) : "",
+  };
+}
 
 export function MarketingDashboard() {
   const [tab, setTab] = useState<TabId>("overview");
-  const [rows, setRows] = useState(leadRows);
-  const [selectedLibraryTemplate, setSelectedLibraryTemplate] = useState<
-    (typeof emailTemplateLibrary)[number]["name"]
-  >(emailTemplateLibrary[0]!.name);
-  const [noWebsiteOnly, setNoWebsiteOnly] = useState(true);
-  const [category, setCategory] = useState<string>(categories[0]!);
-  const [locationText] = useState("El Paso, TX · 50 mile radius");
+  const [bootError, setBootError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [runBusy, setRunBusy] = useState(false);
 
-  const onTemplateChange = (id: string, t: (typeof templateOptions)[number]) => {
-    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, template: t } : r)));
+  const [categories, setCategories] = useState<CategoryRow[]>([]);
+  const [locDraft, setLocDraft] = useState("");
+  const [radiusDraft, setRadiusDraft] = useState(50);
+  const [filterDraft, setFilterDraft] = useState<WebsiteFilter>("no_website");
+
+  const [categoryId, setCategoryId] = useState("");
+  const [nameQuery, setNameQuery] = useState("");
+
+  const categorySelectValue = useMemo(() => {
+    if (!categories.length) return "";
+    if (categoryId && categories.some((c) => c._id === categoryId)) return categoryId;
+    return categories[0]!._id;
+  }, [categories, categoryId]);
+
+  const [templates, setTemplates] = useState<TemplateLite[]>([]);
+  const [mergeFields, setMergeFields] = useState<MergeFieldLite[]>([]);
+  const [leads, setLeads] = useState<LeadApi[]>([]);
+  const [stats, setStats] = useState({
+    leadsFound: 0,
+    noWebsite: 0,
+    emailsFound: 0,
+    socialMatches: 0,
+    messagesSent: 0,
+  });
+
+  const [selectedTplId, setSelectedTplId] = useState<string | null>(null);
+  const [tplName, setTplName] = useState("");
+  const [tplSubject, setTplSubject] = useState("");
+  const [tplBody, setTplBody] = useState("");
+  const [tplDirty, setTplDirty] = useState(false);
+
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [newMergeKey, setNewMergeKey] = useState("");
+  const [newMergeLabel, setNewMergeLabel] = useState("");
+  const [newMergeValue, setNewMergeValue] = useState("");
+
+  const refresh = useCallback(
+    async (options?: { forceTemplateSync?: boolean }) => {
+      const ignoreTplDirty = options?.forceTemplateSync === true;
+    const [c, s, t, m, l, st] = await Promise.all([
+      apiJson<{ items: CategoryRow[] }>("/api/categories"),
+      apiJson<{ settings: SettingsRow | null }>("/api/settings"),
+      apiJson<{ items: Record<string, unknown>[] }>("/api/templates"),
+      apiJson<{ items: MergeFieldLite[] }>("/api/merge-fields"),
+      apiJson<{ items: Record<string, unknown>[] }>("/api/leads"),
+      apiJson<{
+        stats: {
+          leadsFound: number;
+          noWebsite: number;
+          emailsFound: number;
+          socialMatches: number;
+          messagesSent: number;
+        };
+      }>("/api/stats"),
+    ]);
+
+    setCategories(c.items);
+    if (s.settings) {
+      setLocDraft(s.settings.locationAddress);
+      setRadiusDraft(s.settings.radiusMiles);
+      setFilterDraft(s.settings.websiteFilter);
+    }
+    const tItems = t.items.map((row) => ({
+      _id: String(row._id),
+      name: String(row.name),
+      subject: String(row.subject ?? ""),
+      body: String(row.body ?? ""),
+    }));
+    setTemplates(tItems);
+    const templateLocked = tplDirty && !ignoreTplDirty;
+    if (!templateLocked && tItems.length) {
+      let pickId = selectedTplId;
+      if (!pickId || !tItems.some((x) => x._id === pickId)) pickId = tItems[0]!._id;
+      const row = tItems.find((x) => x._id === pickId)!;
+      setSelectedTplId(row._id);
+      setTplName(row.name);
+      setTplSubject(row.subject);
+      setTplBody(row.body);
+    } else if (!tItems.length) {
+      setSelectedTplId(null);
+      setTplName("");
+      setTplSubject("");
+      setTplBody("");
+    }
+    setMergeFields(m.items);
+    setLeads(l.items.map((x) => normalizeLead(x)));
+    setStats(st.stats);
+  },
+  [tplDirty, selectedTplId],
+);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        await apiJson("/api/bootstrap");
+        if (!cancelled) await refresh();
+      } catch (e) {
+        if (!cancelled) setBootError(e instanceof Error ? e.message : "Load failed");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [refresh]);
+
+  const selectedCategoryName = useMemo(() => {
+    return categories.find((c) => c._id === categorySelectValue)?.name ?? "";
+  }, [categories, categorySelectValue]);
+
+  const selectedTemplate = useMemo(() => {
+    return templates.find((t) => t._id === selectedTplId) ?? templates[0] ?? null;
+  }, [templates, selectedTplId]);
+
+  const previewMerged = useMemo(() => {
+    if (!selectedTemplate) return "";
+    const map = buildMergeMap(
+      mergeFields.map((f) => ({ key: f.key, value: f.value })),
+      {
+        businessname: "Sample Business LLC",
+        category: selectedCategoryName || "General",
+      },
+    );
+    return applyMergeTemplate(selectedTemplate.body, map);
+  }, [selectedTemplate, mergeFields, selectedCategoryName]);
+
+  const saveSettings = async () => {
+    try {
+      await apiJson<{ settings: SettingsRow }>("/api/settings", {
+        method: "PATCH",
+        body: JSON.stringify({
+          locationAddress: locDraft,
+          radiusMiles: radiusDraft,
+          websiteFilter: filterDraft,
+        }),
+      });
+      await refresh();
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Save failed");
+    }
   };
+
+  const runPlaces = async (mode: "category" | "name") => {
+    try {
+      setRunBusy(true);
+      const res = await apiJson<{
+        ok: boolean;
+        textQuery: string;
+        rawCount: number;
+        matchedCount: number;
+        savedCount: number;
+      }>("/api/runs/places", {
+        method: "POST",
+        body: JSON.stringify({
+          mode,
+          categoryName: mode === "category" ? selectedCategoryName : undefined,
+          nameQuery: nameQuery.trim() || undefined,
+          websiteFilter: filterDraft,
+        }),
+      });
+      await refresh();
+      window.alert(
+        `Run complete.\nQuery: ${res.textQuery}\nPlaces returned: ${res.rawCount}\nAfter website filter: ${res.matchedCount}\nUpserted leads: ${res.savedCount}`,
+      );
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Run failed");
+    } finally {
+      setRunBusy(false);
+    }
+  };
+
+  const addCategory = async () => {
+    const name = newCategoryName.trim();
+    if (!name) return;
+    try {
+      await apiJson("/api/categories", { method: "POST", body: JSON.stringify({ name }) });
+      setNewCategoryName("");
+      await refresh();
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Failed");
+    }
+  };
+
+  const deleteCategory = async (id: string) => {
+    if (!window.confirm("Delete this category?")) return;
+    try {
+      await apiJson(`/api/categories/${id}`, { method: "DELETE" });
+      await refresh();
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Failed");
+    }
+  };
+
+  const saveTemplate = async () => {
+    if (!selectedTplId) return;
+    try {
+      await apiJson(`/api/templates/${selectedTplId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name: tplName, subject: tplSubject, body: tplBody }),
+      });
+      setTplDirty(false);
+      await refresh({ forceTemplateSync: true });
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Failed");
+    }
+  };
+
+  const addTemplate = async () => {
+    const name = window.prompt("New template name");
+    if (!name?.trim()) return;
+    try {
+      await apiJson("/api/templates", {
+        method: "POST",
+        body: JSON.stringify({
+          name: name.trim(),
+          subject: "New outreach",
+          body: "Hi {{businessName}},\n\n{{myName}}",
+        }),
+      });
+      setTplDirty(false);
+      await refresh({ forceTemplateSync: true });
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Failed");
+    }
+  };
+
+  const deleteTemplate = async () => {
+    if (!selectedTplId) return;
+    if (!window.confirm("Delete this template? Leads using it will be reassigned.")) return;
+    try {
+      await apiJson(`/api/templates/${selectedTplId}`, { method: "DELETE" });
+      setTplDirty(false);
+      await refresh({ forceTemplateSync: true });
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Failed");
+    }
+  };
+
+  const patchMergeField = async (id: string, patch: Partial<MergeFieldLite>) => {
+    await apiJson(`/api/merge-fields/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    });
+    await refresh();
+  };
+
+  const addMergeField = async () => {
+    const key = newMergeKey.trim();
+    const label = newMergeLabel.trim();
+    if (!key || !label) {
+      window.alert("Key and label required");
+      return;
+    }
+    try {
+      await apiJson("/api/merge-fields", {
+        method: "POST",
+        body: JSON.stringify({ key, label, value: newMergeValue }),
+      });
+      setNewMergeKey("");
+      setNewMergeLabel("");
+      setNewMergeValue("");
+      await refresh();
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Failed");
+    }
+  };
+
+  const deleteMergeField = async (id: string) => {
+    if (!window.confirm("Delete this merge field?")) return;
+    try {
+      await apiJson(`/api/merge-fields/${id}`, { method: "DELETE" });
+      await refresh();
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Failed");
+    }
+  };
+
+  const onTemplateChange = async (leadId: string, templateId: string) => {
+    await apiJson(`/api/leads/${leadId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ templateId }),
+    });
+    await refresh();
+  };
+
+  const onStatusChange = async (leadId: string, status: LeadStatus) => {
+    await apiJson(`/api/leads/${leadId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    });
+    await refresh();
+  };
+
+  const onContactPatch = async (
+    leadId: string,
+    patch: { email?: string | null; instagram?: string | null; facebook?: string | null },
+  ) => {
+    await apiJson(`/api/leads/${leadId}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    });
+    await refresh();
+  };
+
+  const onDeleteLead = async (leadId: string) => {
+    await apiJson(`/api/leads/${leadId}`, { method: "DELETE" });
+    await refresh();
+  };
+
+  const statRows = [
+    { label: "Leads found", value: stats.leadsFound },
+    { label: "No website", value: stats.noWebsite },
+    { label: "Emails found", value: stats.emailsFound },
+    { label: "Social matches", value: stats.socialMatches },
+    { label: "Messages sent", value: stats.messagesSent },
+  ] as const;
+
+  if (loading) {
+    return (
+      <div className="flex min-h-full items-center justify-center bg-lux-bg font-sans text-lux-muted">
+        Loading workspace…
+      </div>
+    );
+  }
+
+  if (bootError) {
+    return (
+      <div className="flex min-h-full flex-col items-center justify-center gap-4 bg-lux-bg px-6 text-center font-sans text-lux-crimson">
+        <p>{bootError}</p>
+        <p className="max-w-md text-sm text-lux-muted">Check MONGODB_URI and that MongoDB Atlas allows your IP.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-full bg-lux-bg text-lux-fg-dim">
@@ -285,7 +466,9 @@ export function MarketingDashboard() {
               </nav>
               <button
                 type="button"
-                className="rounded-sm border border-[color:var(--color-lux-gold-line)] bg-lux-panel px-6 py-2.5 text-xs font-semibold uppercase tracking-[0.2em] text-lux-gold-bright shadow-[0_0_0_1px_rgba(201,162,39,0.12),0_12px_36px_-10px_rgba(0,0,0,0.5)] transition hover:bg-lux-gold-soft/30 hover:text-lux-fg"
+                disabled={runBusy}
+                onClick={() => void runPlaces("category")}
+                className="rounded-sm border border-[color:var(--color-lux-gold-line)] bg-lux-panel px-6 py-2.5 text-xs font-semibold uppercase tracking-[0.2em] text-lux-gold-bright shadow-[0_0_0_1px_rgba(201,162,39,0.12),0_12px_36px_-10px_rgba(0,0,0,0.5)] transition hover:bg-lux-gold-soft/30 hover:text-lux-fg disabled:opacity-40"
               >
                 Run Bot
               </button>
@@ -297,13 +480,12 @@ export function MarketingDashboard() {
           <div className="mt-12 space-y-12">
             <section className="rounded-sm border border-lux-line bg-lux-panel/95 p-8 shadow-[0_1px_0_var(--color-lux-rim)_inset,0_24px_60px_-28px_rgba(0,0,0,0.55)] sm:p-10">
               <p className="max-w-2xl font-serif text-lg leading-relaxed text-lux-fg-dim">
-                Find category-based local businesses, flag weak or missing web presence, attach maps
-                and social hints, then run templated outreach.{" "}
+                Find category-based local businesses, flag weak or missing web presence, attach maps and social hints,
+                then run templated outreach.{" "}
                 <span className="text-lux-fg">
                   Hard cap of <strong className="text-lux-gold-bright">20 leads per search run</strong>.
                 </span>
               </p>
-              <p className="mt-4 text-xs uppercase tracking-widest text-lux-subtle">Preview · no backend</p>
             </section>
 
             <section className="grid gap-3 sm:grid-cols-5">
@@ -325,67 +507,133 @@ export function MarketingDashboard() {
 
             <section className="rounded-sm border border-lux-line bg-lux-panel/95 p-8 shadow-[0_1px_0_var(--color-lux-rim)_inset,0_20px_50px_-24px_rgba(0,0,0,0.5)] sm:p-10">
               <h2 className="font-serif text-xl font-semibold text-lux-fg">Search</h2>
-              <p className="mt-1 text-xs text-lux-muted">Controls are visual only for this pass.</p>
+              <p className="mt-1 text-xs text-lux-muted">Saves to MongoDB. Uses Google Places + Geocoding.</p>
               <div className="mt-8 grid gap-6 sm:grid-cols-2">
                 <label className="block space-y-2">
                   <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-lux-gold-bright">
                     Category
                   </span>
                   <select
-                    value={category}
-                    onChange={(e) => setCategory(e.target.value)}
+                    value={categorySelectValue}
+                    onChange={(e) => setCategoryId(e.target.value)}
                     className="w-full cursor-pointer rounded-sm border border-lux-line bg-lux-field px-3 py-3 text-sm text-lux-fg-dim outline-none transition focus:border-lux-gold focus:ring-1 focus:ring-lux-gold-soft"
                   >
                     {categories.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
+                      <option key={c._id} value={c._id}>
+                        {c.name}
                       </option>
                     ))}
                   </select>
                 </label>
-                <label className="block space-y-2 sm:col-span-2">
+                <label className="block space-y-2">
                   <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-lux-teal">
-                    Location
+                    Name contains (optional)
                   </span>
                   <input
-                    readOnly
-                    value={locationText}
-                    className="w-full rounded-sm border border-lux-line-soft bg-lux-raised px-3 py-3 font-mono text-xs text-lux-muted"
+                    value={nameQuery}
+                    onChange={(e) => setNameQuery(e.target.value)}
+                    placeholder="e.g. bakery, barber, or business name"
+                    className="w-full rounded-sm border border-lux-line bg-lux-field px-3 py-3 text-sm text-lux-fg-dim outline-none transition focus:border-lux-gold focus:ring-1 focus:ring-lux-gold-soft"
                   />
                 </label>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={noWebsiteOnly}
-                onClick={() => setNoWebsiteOnly((v) => !v)}
-                className="mt-8 flex w-full max-w-md items-center justify-between gap-4 rounded-sm border border-lux-line bg-lux-field px-4 py-3.5 text-left text-sm text-lux-fg-dim transition hover:border-lux-gold/40"
-              >
-                Only businesses without websites
-                <span
-                  className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
-                    noWebsiteOnly ? "bg-gradient-to-r from-lux-gold to-[#8a721f]" : "bg-lux-line-soft"
-                  }`}
-                >
-                  <span
-                    className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-lux-fg shadow-sm ring-1 ring-lux-line transition-transform ${
-                      noWebsiteOnly ? "translate-x-5" : ""
-                    }`}
+                <label className="block space-y-2 sm:col-span-2">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-lux-teal">
+                    Location (geocoded)
+                  </span>
+                  <input
+                    value={locDraft}
+                    onChange={(e) => setLocDraft(e.target.value)}
+                    className="w-full rounded-sm border border-lux-line bg-lux-field px-3 py-3 font-mono text-xs text-lux-fg-dim outline-none transition focus:border-lux-gold focus:ring-1 focus:ring-lux-gold-soft"
                   />
-                </span>
-              </button>
-              <div className="mt-6 flex flex-wrap gap-2">
+                </label>
+                <label className="block space-y-2">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-lux-gold-bright">
+                    Radius (miles)
+                  </span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={200}
+                    value={radiusDraft}
+                    onChange={(e) => setRadiusDraft(Number(e.target.value))}
+                    className="w-full rounded-sm border border-lux-line bg-lux-field px-3 py-3 font-mono text-sm text-lux-fg-dim outline-none focus:border-lux-gold"
+                  />
+                </label>
+                <label className="block space-y-2">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-lux-gold-bright">
+                    Website filter for run
+                  </span>
+                  <select
+                    value={filterDraft}
+                    onChange={(e) => setFilterDraft(e.target.value as WebsiteFilter)}
+                    className="w-full cursor-pointer rounded-sm border border-lux-line bg-lux-field px-3 py-3 text-sm outline-none focus:border-lux-gold"
+                  >
+                    <option value="no_website">No public website only</option>
+                    <option value="any">Any</option>
+                    <option value="has_website">Has website only</option>
+                  </select>
+                </label>
+              </div>
+              <div className="mt-6 flex flex-wrap gap-3">
                 <button
                   type="button"
-                  className="rounded-sm border border-lux-line bg-lux-canvas px-5 py-2.5 text-xs font-semibold uppercase tracking-wider text-lux-fg-dim transition hover:border-lux-gold/40 hover:text-lux-gold-bright"
+                  onClick={() => void saveSettings()}
+                  className="rounded-sm border border-lux-gold/50 bg-lux-gold-soft/20 px-5 py-2.5 text-xs font-semibold uppercase tracking-wider text-lux-gold-bright transition hover:bg-lux-gold-soft/40"
                 >
-                  Category search
+                  Save search settings
                 </button>
                 <button
                   type="button"
-                  className="rounded-sm border border-lux-line bg-lux-canvas px-5 py-2.5 text-xs font-semibold uppercase tracking-wider text-lux-fg-dim transition hover:border-lux-teal/40 hover:text-lux-link"
+                  disabled={runBusy}
+                  onClick={() => void runPlaces("category")}
+                  className="rounded-sm border border-lux-line bg-lux-canvas px-5 py-2.5 text-xs font-semibold uppercase tracking-wider text-lux-fg-dim transition hover:border-lux-gold/40 hover:text-lux-gold-bright disabled:opacity-40"
                 >
-                  Direct name search
+                  Category search run
+                </button>
+                <button
+                  type="button"
+                  disabled={runBusy}
+                  onClick={() => void runPlaces("name")}
+                  className="rounded-sm border border-lux-line bg-lux-canvas px-5 py-2.5 text-xs font-semibold uppercase tracking-wider text-lux-fg-dim transition hover:border-lux-teal/40 hover:text-lux-link disabled:opacity-40"
+                >
+                  Direct name run
+                </button>
+              </div>
+            </section>
+
+            <section className="rounded-sm border border-lux-line bg-lux-panel/95 p-8 shadow-[0_1px_0_var(--color-lux-rim)_inset] sm:p-10">
+              <h2 className="font-serif text-xl font-semibold text-lux-fg">Categories</h2>
+              <p className="mt-1 text-xs text-lux-muted">Add or remove labels used for search and leads.</p>
+              <ul className="mt-4 flex flex-wrap gap-2">
+                {categories.map((c) => (
+                  <li
+                    key={c._id}
+                    className="flex items-center gap-2 rounded-sm border border-lux-line bg-lux-field px-3 py-2 text-xs"
+                  >
+                    <span>{c.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => void deleteCategory(c._id)}
+                      className="text-lux-crimson hover:underline"
+                    >
+                      remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <input
+                  value={newCategoryName}
+                  onChange={(e) => setNewCategoryName(e.target.value)}
+                  placeholder="New category name"
+                  className="min-w-[200px] flex-1 rounded-sm border border-lux-line bg-lux-field px-3 py-2 text-sm outline-none focus:border-lux-gold"
+                />
+                <button
+                  type="button"
+                  onClick={() => void addCategory()}
+                  className="rounded-sm bg-lux-primary px-4 py-2 text-xs font-semibold text-lux-primary-fg"
+                >
+                  Add category
                 </button>
               </div>
             </section>
@@ -397,16 +645,25 @@ export function MarketingDashboard() {
             <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
               <div>
                 <h2 className="font-serif text-2xl font-semibold text-lux-fg">Leads</h2>
-                <p className="text-xs text-lux-muted">Ledger layout · dummy data</p>
+                <p className="text-xs text-lux-muted">Stored in MongoDB · up to 20 new matches per Places run</p>
               </div>
-              <p className="text-[10px] uppercase tracking-[0.2em] text-lux-gold-muted">
-                20 leads max per run
-              </p>
             </div>
             <div className="mt-8 grid gap-5 sm:grid-cols-2">
-              {rows.map((row) => (
-                <LeadCard key={row.id} row={row} onTemplateChange={onTemplateChange} />
+              {leads.map((row) => (
+                <LeadCard
+                  key={`${row._id}-${row.updatedAt ?? ""}`}
+                  row={row}
+                  templates={templates}
+                  mergeFields={mergeFields}
+                  onTemplateChange={onTemplateChange}
+                  onStatusChange={onStatusChange}
+                  onContactPatch={onContactPatch}
+                  onDelete={onDeleteLead}
+                />
               ))}
+              {!leads.length && (
+                <p className="col-span-full text-sm text-lux-muted">No leads yet. Run a search from Overview.</p>
+              )}
             </div>
           </div>
         )}
@@ -416,22 +673,41 @@ export function MarketingDashboard() {
             <aside className="space-y-3 border-l-2 border-[color:var(--color-lux-gold)]/60 pl-6">
               <h2 className="font-serif text-2xl font-semibold text-lux-gold-bright">Library</h2>
               <p className="text-xs text-lux-muted">Correspondence templates</p>
-              <ul className="mt-6 space-y-2">
-                {emailTemplateLibrary.map((tpl) => (
-                  <li key={tpl.id}>
+              <div className="mt-4 flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={() => void addTemplate()}
+                  className="rounded-sm border border-lux-line bg-lux-canvas px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-lux-muted hover:border-lux-gold/40"
+                >
+                  New template
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void deleteTemplate()}
+                  className="rounded-sm border border-lux-crimson/40 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-lux-crimson hover:bg-lux-crimson-soft"
+                >
+                  Delete selected
+                </button>
+              </div>
+              <ul className="mt-4 space-y-2">
+                {templates.map((tpl) => (
+                  <li key={tpl._id}>
                     <button
                       type="button"
-                      onClick={() => setSelectedLibraryTemplate(tpl.name)}
+                      onClick={() => {
+                        setTplDirty(false);
+                        setSelectedTplId(tpl._id);
+                        setTplName(tpl.name);
+                        setTplSubject(tpl.subject);
+                        setTplBody(tpl.body);
+                      }}
                       className={`flex w-full flex-col rounded-sm border px-4 py-3.5 text-left transition ${
-                        selectedLibraryTemplate === tpl.name
+                        selectedTplId === tpl._id
                           ? "border-lux-gold bg-lux-raised shadow-md ring-1 ring-[color:var(--color-lux-gold-line)]"
                           : "border-lux-line bg-lux-panel/80 hover:border-lux-gold/35"
                       }`}
                     >
                       <span className="text-sm font-medium text-lux-fg">{tpl.name}</span>
-                      <span className="mt-1 text-[10px] uppercase tracking-[0.18em] text-lux-teal">
-                        {tpl.category}
-                      </span>
                     </button>
                   </li>
                 ))}
@@ -439,60 +715,140 @@ export function MarketingDashboard() {
             </aside>
             <div className="space-y-8">
               <div className="rounded-sm border border-lux-line bg-lux-panel/95 p-8 shadow-[0_1px_0_var(--color-lux-rim)_inset,0_16px_40px_-18px_rgba(0,0,0,0.45)]">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-lux-gold-bright">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-lux-gold-bright">Edit</p>
+                <label className="mt-4 block text-xs text-lux-muted">
+                  Name
+                  <input
+                    value={tplName}
+                    onChange={(e) => {
+                      setTplDirty(true);
+                      setTplName(e.target.value);
+                    }}
+                    className="mt-1 w-full rounded-sm border border-lux-line bg-lux-field px-3 py-2 text-sm text-lux-fg outline-none focus:border-lux-gold"
+                  />
+                </label>
+                <label className="mt-3 block text-xs text-lux-muted">
                   Subject
-                </p>
-                <p className="mt-3 font-serif text-base text-lux-fg-dim">
-                  {emailTemplateLibrary.find((t) => t.name === selectedLibraryTemplate)?.subject}
-                </p>
+                  <input
+                    value={tplSubject}
+                    onChange={(e) => {
+                      setTplDirty(true);
+                      setTplSubject(e.target.value);
+                    }}
+                    className="mt-1 w-full rounded-sm border border-lux-line bg-lux-field px-3 py-2 text-sm text-lux-fg outline-none focus:border-lux-gold"
+                  />
+                </label>
+                <label className="mt-3 block text-xs text-lux-muted">
+                  Body (use {"{{myName}}"}, {"{{businessName}}"}, etc.)
+                  <textarea
+                    value={tplBody}
+                    onChange={(e) => {
+                      setTplDirty(true);
+                      setTplBody(e.target.value);
+                    }}
+                    rows={12}
+                    className="mt-1 w-full rounded-sm border border-lux-line bg-lux-field px-3 py-2 font-mono text-xs text-lux-fg-dim outline-none focus:border-lux-gold"
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => void saveTemplate()}
+                  className="mt-4 rounded-sm bg-lux-primary px-5 py-2 text-xs font-semibold text-lux-primary-fg"
+                >
+                  Save template
+                </button>
               </div>
               <div className="rounded-sm border border-lux-line bg-lux-canvas p-8 shadow-[0_14px_40px_-16px_rgba(0,0,0,0.4)]">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-lux-teal">
-                  Body preview
-                </p>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-lux-teal">Body preview</p>
                 <div className="mt-4 max-h-[340px] overflow-auto rounded-sm border border-lux-line bg-lux-field p-4 shadow-[inset_0_2px_14px_rgba(0,0,0,0.5)]">
-                  <TemplatePreviewBody templateName={selectedLibraryTemplate} />
+                  <pre className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-lux-muted">
+                    {previewMerged}
+                  </pre>
                 </div>
               </div>
               <div className="rounded-sm border border-lux-line bg-lux-panel/90 p-8 shadow-[0_1px_0_var(--color-lux-rim)_inset]">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-lux-crimson">
-                  Merge fields
+                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-lux-crimson">Merge fields</p>
+                <p className="mt-1 text-[10px] uppercase tracking-widest text-lux-subtle">
+                  Keys are lowercased. Use in templates as {"{{key}}"}. Business fields: {"{{businessName}}"}{" "}
+                  {"{{category}}"}.
                 </p>
-                <p className="mt-1 text-[10px] uppercase tracking-widest text-lux-subtle">Static mock</p>
-                <dl className="mt-6 grid gap-4 text-xs sm:grid-cols-2">
-                  <div className="border-b border-lux-line-soft pb-3 sm:border-0 sm:pb-0">
-                    <dt className="text-lux-muted">Name</dt>
-                    <dd className="mt-1 font-mono text-lux-fg-dim">{ownerPlaceholders.ownerName}</dd>
+                <ul className="mt-6 space-y-4">
+                  {mergeFields.map((mf) => (
+                    <li key={mf._id} className="grid gap-2 border-b border-lux-line-soft pb-4 sm:grid-cols-[1fr_2fr_auto] sm:items-end">
+                      <label className="text-[10px] uppercase text-lux-muted">
+                        Key
+                        <input
+                          defaultValue={mf.key}
+                          key={mf._id + mf.key}
+                          onBlur={(e) => {
+                            const v = e.target.value.trim().toLowerCase();
+                            if (v && v !== mf.key) void patchMergeField(mf._id, { key: v });
+                          }}
+                          className="mt-1 block w-full rounded-sm border border-lux-line bg-lux-field px-2 py-1 font-mono text-xs outline-none focus:border-lux-gold"
+                        />
+                      </label>
+                      <label className="text-[10px] uppercase text-lux-muted">
+                        Label / value
+                        <div className="mt-1 flex flex-col gap-1 sm:flex-row">
+                          <input
+                            defaultValue={mf.label}
+                            key={mf._id + "l" + mf.label}
+                            onBlur={(e) => {
+                              const v = e.target.value.trim();
+                              if (v && v !== mf.label) void patchMergeField(mf._id, { label: v });
+                            }}
+                            className="w-full rounded-sm border border-lux-line bg-lux-field px-2 py-1 text-xs outline-none sm:w-1/3"
+                          />
+                          <input
+                            defaultValue={mf.value}
+                            key={mf._id + "v" + mf.value}
+                            onBlur={(e) => {
+                              const v = e.target.value;
+                              if (v !== mf.value) void patchMergeField(mf._id, { value: v });
+                            }}
+                            className="w-full flex-1 rounded-sm border border-lux-line bg-lux-field px-2 py-1 font-mono text-xs outline-none"
+                          />
+                        </div>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => void deleteMergeField(mf._id)}
+                        className="text-[10px] font-semibold uppercase text-lux-crimson hover:underline"
+                      >
+                        Remove
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                <div className="mt-6 grid gap-2 border-t border-lux-line-soft pt-4 sm:grid-cols-3">
+                  <input
+                    value={newMergeKey}
+                    onChange={(e) => setNewMergeKey(e.target.value)}
+                    placeholder="key e.g. myName"
+                    className="rounded-sm border border-lux-line bg-lux-field px-2 py-2 font-mono text-xs outline-none"
+                  />
+                  <input
+                    value={newMergeLabel}
+                    onChange={(e) => setNewMergeLabel(e.target.value)}
+                    placeholder="Label"
+                    className="rounded-sm border border-lux-line bg-lux-field px-2 py-2 text-xs outline-none"
+                  />
+                  <div className="flex gap-2">
+                    <input
+                      value={newMergeValue}
+                      onChange={(e) => setNewMergeValue(e.target.value)}
+                      placeholder="Value / URL"
+                      className="min-w-0 flex-1 rounded-sm border border-lux-line bg-lux-field px-2 py-2 font-mono text-xs outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void addMergeField()}
+                      className="shrink-0 rounded-sm bg-lux-teal/20 px-3 py-2 text-[10px] font-semibold uppercase text-lux-link"
+                    >
+                      Add
+                    </button>
                   </div>
-                  <div className="border-b border-lux-line-soft pb-3 sm:border-0 sm:pb-0">
-                    <dt className="text-lux-muted">Phone</dt>
-                    <dd className="mt-1 font-mono text-lux-fg-dim">{ownerPlaceholders.phone}</dd>
-                  </div>
-                  <div className="col-span-full border-b border-lux-line-soft pb-3">
-                    <dt className="text-lux-muted">Portfolio</dt>
-                    <dd className="mt-1">
-                      <a href="#" className="break-all font-mono text-lux-link hover:text-lux-link-hover">
-                        {ownerPlaceholders.portfolioLink}
-                      </a>
-                    </dd>
-                  </div>
-                  <div className="col-span-full border-b border-lux-line-soft pb-3">
-                    <dt className="text-lux-muted">LinkedIn</dt>
-                    <dd className="mt-1">
-                      <a href="#" className="break-all font-mono text-lux-gold-bright hover:underline">
-                        {ownerPlaceholders.linkedIn}
-                      </a>
-                    </dd>
-                  </div>
-                  <div className="col-span-full">
-                    <dt className="text-lux-muted">Sample project</dt>
-                    <dd className="mt-1">
-                      <a href="#" className="break-all font-mono text-lux-teal hover:text-lux-link-hover">
-                        {ownerPlaceholders.sampleProjectLink}
-                      </a>
-                    </dd>
-                  </div>
-                </dl>
+                </div>
               </div>
             </div>
           </div>

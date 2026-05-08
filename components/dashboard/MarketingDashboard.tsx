@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { APP_NAME } from "@/lib/constants";
 import type { LeadStatus, WebsiteFilter } from "@/lib/constants";
 import { applyMergeTemplate, buildMergeMap } from "@/lib/merge";
@@ -93,13 +94,16 @@ function normalizeLead(raw: Record<string, unknown>): LeadApi {
   };
 }
 
-export function MarketingDashboard() {
+export function MarketingDashboard({ showSetupPopup }: { showSetupPopup?: boolean }) {
+  const router = useRouter();
   const [tab, setTab] = useState<TabId>("overview");
   const [bootError, setBootError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [runBusy, setRunBusy] = useState(false);
   const [runSuccess, setRunSuccess] = useState<RunSuccessSummary | null>(null);
   const runSuccessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [setupModalOpen, setSetupModalOpen] = useState(Boolean(showSetupPopup));
+  const [setupBusy, setSetupBusy] = useState(false);
 
   const clearRunSuccessTimer = useCallback(() => {
     if (runSuccessTimerRef.current) {
@@ -126,6 +130,9 @@ export function MarketingDashboard() {
   );
 
   useEffect(() => () => clearRunSuccessTimer(), [clearRunSuccessTimer]);
+  useEffect(() => {
+    setSetupModalOpen(Boolean(showSetupPopup));
+  }, [showSetupPopup]);
 
   const [categories, setCategories] = useState<CategoryRow[]>([]);
   const [locDraft, setLocDraft] = useState("");
@@ -170,6 +177,29 @@ export function MarketingDashboard() {
   const [newMergeValue, setNewMergeValue] = useState("");
   const [deleteAllModalOpen, setDeleteAllModalOpen] = useState(false);
   const [deleteAllBusy, setDeleteAllBusy] = useState(false);
+
+  const confirmSetup = async () => {
+    try {
+      setSetupBusy(true);
+      await apiJson("/api/auth/setup-complete", { method: "POST" });
+      setSetupModalOpen(false);
+      router.replace("/");
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Failed to save setup");
+    } finally {
+      setSetupBusy(false);
+    }
+  };
+
+  const logout = async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+      router.push("/");
+      router.refresh();
+    } catch {
+      window.alert("Logout failed");
+    }
+  };
 
   useEffect(() => {
     if (!deleteAllModalOpen) return;
@@ -536,6 +566,40 @@ export function MarketingDashboard() {
         }}
       />
 
+      {setupModalOpen ? (
+        <div className="fixed inset-0 z-[120] flex items-end justify-center p-4 sm:items-center">
+          <div className="absolute inset-0 bg-black/55 backdrop-blur-[3px]" aria-hidden />
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="setup-title"
+            aria-describedby="setup-desc"
+            className="relative z-10 w-full max-w-md overflow-hidden rounded-2xl border border-lux-teal/35 bg-lux-panel/98 shadow-[0_28px_80px_-24px_rgba(0,0,0,0.75),0_0_0_1px_rgba(45,212,191,0.15)] ring-1 ring-lux-teal/20"
+          >
+            <div className="h-1 w-full bg-gradient-to-r from-lux-teal/40 via-lux-emerald/60 to-lux-teal/50" aria-hidden />
+            <div className="px-6 pb-5 pt-5 sm:px-8 sm:pt-6">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-lux-teal">Quick setup</p>
+              <h2 id="setup-title" className="mt-2 font-serif text-xl font-semibold tracking-tight text-lux-fg">
+                Configure your workspace
+              </h2>
+              <p id="setup-desc" className="mt-3 text-sm leading-relaxed text-lux-muted">
+                Update your location and set your email templates so the bot can generate leads and messages for your area.
+              </p>
+              <div className="mt-6 flex justify-end">
+                <button
+                  type="button"
+                  disabled={setupBusy}
+                  onClick={() => void confirmSetup()}
+                  className="rounded-sm border border-lux-teal/35 bg-lux-teal/20 px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-lux-teal transition hover:border-lux-teal/55 hover:bg-lux-teal/30 disabled:opacity-50"
+                >
+                  {setupBusy ? "Saving…" : "OK"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {deleteAllModalOpen ? (
         <div className="fixed inset-0 z-[100] flex items-end justify-center p-4 sm:items-center">
           <button
@@ -683,6 +747,13 @@ export function MarketingDashboard() {
                 className="rounded-sm border border-[color:var(--color-lux-gold-line)] bg-lux-panel px-6 py-2.5 text-xs font-semibold uppercase tracking-[0.2em] text-lux-gold-bright shadow-[0_0_0_1px_rgba(201,162,39,0.12),0_12px_36px_-10px_rgba(0,0,0,0.5)] transition hover:bg-lux-gold-soft/30 hover:text-lux-fg disabled:opacity-40"
               >
                 Run Bot
+              </button>
+              <button
+                type="button"
+                onClick={() => void logout()}
+                className="rounded-sm border border-lux-line bg-lux-canvas px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-lux-muted transition hover:border-lux-crimson/35 hover:text-lux-crimson"
+              >
+                Log out
               </button>
             </div>
           </div>

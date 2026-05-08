@@ -2,6 +2,7 @@ import mongoose, { Schema, type InferSchemaType } from "mongoose";
 
 const templateSchema = new Schema(
   {
+    userId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
     name: { type: String, required: true, trim: true },
     subject: { type: String, default: "" },
     body: { type: String, default: "" },
@@ -11,7 +12,7 @@ const templateSchema = new Schema(
   { timestamps: true },
 );
 
-templateSchema.index({ name: 1 }, { unique: true });
+templateSchema.index({ userId: 1, name: 1 }, { unique: true });
 
 export type TemplateDoc = InferSchemaType<typeof templateSchema> & {
   _id: mongoose.Types.ObjectId;

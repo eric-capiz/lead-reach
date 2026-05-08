@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
 import mongoose from "mongoose";
-import { ensureAppData } from "@/server/ensure-app-data";
 import { CategoryModel } from "@/server/db/models";
+import { requireCurrentUserId } from "@/server/auth/session";
+import { ensureUserSeeded } from "@/server/services/seed-defaults";
 
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function PATCH(req: Request, ctx: Ctx) {
   try {
-    await ensureAppData();
+    const userId = await requireCurrentUserId();
+    await ensureUserSeeded(userId);
     const { id } = await ctx.params;
     if (!mongoose.isValidObjectId(id)) {
       return NextResponse.json({ error: "Invalid id" }, { status: 400 });
@@ -16,7 +18,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
     const patch: Record<string, unknown> = {};
     if (typeof body.name === "string") patch.name = body.name.trim();
     if (typeof body.order === "number") patch.order = body.order;
-    const doc = await CategoryModel.findByIdAndUpdate(id, patch, { new: true }).lean();
+    const doc = await CategoryModel.findOneAndUpdate({ _id: id, userId }, patch, { new: true }).lean();
     if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json({ item: doc });
   } catch (e) {
@@ -27,12 +29,13 @@ export async function PATCH(req: Request, ctx: Ctx) {
 
 export async function DELETE(_req: Request, ctx: Ctx) {
   try {
-    await ensureAppData();
+    const userId = await requireCurrentUserId();
+    await ensureUserSeeded(userId);
     const { id } = await ctx.params;
     if (!mongoose.isValidObjectId(id)) {
       return NextResponse.json({ error: "Invalid id" }, { status: 400 });
     }
-    const doc = await CategoryModel.findByIdAndDelete(id).lean();
+    const doc = await CategoryModel.findOneAndDelete({ _id: id, userId }).lean();
     if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json({ ok: true });
   } catch (e) {

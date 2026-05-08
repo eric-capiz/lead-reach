@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
-import { ensureAppData } from "@/server/ensure-app-data";
 import { TemplateModel } from "@/server/db/models";
+import { requireCurrentUserId } from "@/server/auth/session";
+import { ensureUserSeeded } from "@/server/services/seed-defaults";
 
 export async function GET() {
   try {
-    await ensureAppData();
-    const items = await TemplateModel.find().sort({ order: 1, name: 1 }).lean();
+    const userId = await requireCurrentUserId();
+    await ensureUserSeeded(userId);
+    const items = await TemplateModel.find({ userId }).sort({ order: 1, name: 1 }).lean();
     return NextResponse.json({ items });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Failed";
@@ -15,7 +17,8 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    await ensureAppData();
+    const userId = await requireCurrentUserId();
+    await ensureUserSeeded(userId);
     const body = (await req.json()) as {
       name?: string;
       subject?: string;
@@ -26,6 +29,7 @@ export async function POST(req: Request) {
     const name = body.name?.trim();
     if (!name) return NextResponse.json({ error: "name required" }, { status: 400 });
     const doc = await TemplateModel.create({
+      userId,
       name,
       subject: body.subject?.trim() ?? "",
       body: body.body ?? "",

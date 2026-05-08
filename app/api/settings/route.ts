@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
-import { ensureAppData } from "@/server/ensure-app-data";
 import { AppSettingsModel } from "@/server/db/models";
+import { requireCurrentUserId } from "@/server/auth/session";
+import { ensureUserSeeded } from "@/server/services/seed-defaults";
 
 export async function GET() {
   try {
-    await ensureAppData();
-    const doc = await AppSettingsModel.findOne().sort({ createdAt: 1 }).lean();
+    const userId = await requireCurrentUserId();
+    await ensureUserSeeded(userId);
+    const doc = await AppSettingsModel.findOne({ userId }).lean();
     return NextResponse.json({ settings: doc });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Failed";
@@ -15,7 +17,8 @@ export async function GET() {
 
 export async function PATCH(req: Request) {
   try {
-    await ensureAppData();
+    const userId = await requireCurrentUserId();
+    await ensureUserSeeded(userId);
     const body = (await req.json()) as {
       locationAddress?: string;
       radiusMiles?: number;
@@ -29,7 +32,7 @@ export async function PATCH(req: Request) {
     if (body.websiteFilter === "no_website" || body.websiteFilter === "any" || body.websiteFilter === "has_website") {
       patch.websiteFilter = body.websiteFilter;
     }
-    const base = await AppSettingsModel.findOne().sort({ createdAt: 1 });
+    const base = await AppSettingsModel.findOne({ userId });
     if (!base) return NextResponse.json({ error: "No settings" }, { status: 500 });
     Object.assign(base, patch);
     await base.save();

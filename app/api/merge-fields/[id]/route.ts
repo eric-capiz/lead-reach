@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
 import mongoose from "mongoose";
-import { ensureAppData } from "@/server/ensure-app-data";
 import { MergeFieldModel } from "@/server/db/models";
+import { requireCurrentUserId } from "@/server/auth/session";
+import { ensureUserSeeded } from "@/server/services/seed-defaults";
 
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function PATCH(req: Request, ctx: Ctx) {
   try {
-    await ensureAppData();
+    const userId = await requireCurrentUserId();
+    await ensureUserSeeded(userId);
     const { id } = await ctx.params;
     if (!mongoose.isValidObjectId(id)) {
       return NextResponse.json({ error: "Invalid id" }, { status: 400 });
@@ -17,7 +19,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
     if (typeof body.key === "string") patch.key = body.key.trim().toLowerCase().replace(/\s+/g, "");
     if (typeof body.label === "string") patch.label = body.label.trim();
     if (typeof body.value === "string") patch.value = body.value;
-    const doc = await MergeFieldModel.findByIdAndUpdate(id, patch, { new: true }).lean();
+    const doc = await MergeFieldModel.findOneAndUpdate({ _id: id, userId }, patch, { new: true }).lean();
     if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json({ item: doc });
   } catch (e) {
@@ -28,12 +30,13 @@ export async function PATCH(req: Request, ctx: Ctx) {
 
 export async function DELETE(_req: Request, ctx: Ctx) {
   try {
-    await ensureAppData();
+    const userId = await requireCurrentUserId();
+    await ensureUserSeeded(userId);
     const { id } = await ctx.params;
     if (!mongoose.isValidObjectId(id)) {
       return NextResponse.json({ error: "Invalid id" }, { status: 400 });
     }
-    const doc = await MergeFieldModel.findByIdAndDelete(id).lean();
+    const doc = await MergeFieldModel.findOneAndDelete({ _id: id, userId }).lean();
     if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json({ ok: true });
   } catch (e) {

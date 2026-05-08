@@ -2,6 +2,7 @@ import mongoose, { Schema, type InferSchemaType } from "mongoose";
 
 const leadSchema = new Schema(
   {
+    userId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
     googlePlaceId: { type: String, required: true, trim: true },
     businessName: { type: String, required: true, trim: true },
     category: { type: String, default: "" },
@@ -24,7 +25,7 @@ const leadSchema = new Schema(
   { timestamps: true },
 );
 
-leadSchema.index({ googlePlaceId: 1 }, { unique: true });
+leadSchema.index({ userId: 1, googlePlaceId: 1 }, { unique: true });
 
 export type LeadDoc = InferSchemaType<typeof leadSchema> & {
   _id: mongoose.Types.ObjectId;

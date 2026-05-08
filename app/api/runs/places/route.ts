@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 import { AppSettingsModel, LeadModel, TemplateModel } from "@/server/db/models";
-import { ensureAppData } from "@/server/ensure-app-data";
 import { filterByWebsitePreference, geocodeAddress, searchPlacesText } from "@/server/services/places";
+import { requireCurrentUserId } from "@/server/auth/session";
+import { ensureUserSeeded } from "@/server/services/seed-defaults";
 
 export async function POST(req: Request) {
   try {
-    await ensureAppData();
+    const userId = await requireCurrentUserId();
+    await ensureUserSeeded(userId);
     const apiKey = process.env.GOOGLE_MAPS_API_KEY;
     if (!apiKey) {
       return NextResponse.json({ error: "Missing GOOGLE_MAPS_API_KEY" }, { status: 500 });
@@ -18,7 +20,7 @@ export async function POST(req: Request) {
       websiteFilter?: "no_website" | "any" | "has_website";
     };
 
-    const settings = await AppSettingsModel.findOne().sort({ createdAt: 1 });
+    const settings = await AppSettingsModel.findOne({ userId });
     if (!settings) return NextResponse.json({ error: "No settings" }, { status: 500 });
 
     const websiteFilter = body.websiteFilter ?? settings.websiteFilter ?? "no_website";
@@ -49,7 +51,7 @@ export async function POST(req: Request) {
     });
 
     const filtered = filterByWebsitePreference(raw, websiteFilter);
-    const defaultTpl = await TemplateModel.findOne().sort({ order: 1 }).select("_id");
+    const defaultTpl = await TemplateModel.findOne({ userId }).sort({ order: 1 }).select("_id");
     const defaultTemplateId = defaultTpl?._id ?? null;
 
     const saved: string[] = [];
@@ -61,9 +63,10 @@ export async function POST(req: Request) {
       const setOnInsert: Record<string, unknown> = {};
       if (defaultTemplateId) setOnInsert.templateId = defaultTemplateId;
       const doc = await LeadModel.findOneAndUpdate(
-        { googlePlaceId: p.googlePlaceId },
+        { userId, googlePlaceId: p.googlePlaceId },
         {
           $set: {
+            userId,
             businessName: p.businessName,
             category: categoryLabel,
             location: p.location,
@@ -81,7 +84,7 @@ export async function POST(req: Request) {
     }
 
     if (saved.length > 0) {
-      await LeadModel.deleteMany({ isSample: true });
+      await LeadModel.deleteMany({ userId, isSample: true });
     }
 
     return NextResponse.json({

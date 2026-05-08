@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
-import { ensureAppData } from "@/server/ensure-app-data";
 import { MergeFieldModel } from "@/server/db/models";
+import { requireCurrentUserId } from "@/server/auth/session";
+import { ensureUserSeeded } from "@/server/services/seed-defaults";
 
 export async function GET() {
   try {
-    await ensureAppData();
-    const items = await MergeFieldModel.find().sort({ key: 1 }).lean();
+    const userId = await requireCurrentUserId();
+    await ensureUserSeeded(userId);
+    const items = await MergeFieldModel.find({ userId }).sort({ key: 1 }).lean();
     return NextResponse.json({ items });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Failed";
@@ -15,7 +17,8 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    await ensureAppData();
+    const userId = await requireCurrentUserId();
+    await ensureUserSeeded(userId);
     const body = (await req.json()) as { key?: string; label?: string; value?: string };
     const key = body.key?.trim().toLowerCase().replace(/\s+/g, "");
     const label = body.label?.trim();
@@ -23,6 +26,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "key and label required" }, { status: 400 });
     }
     const doc = await MergeFieldModel.create({
+      userId,
       key,
       label,
       value: body.value ?? "",

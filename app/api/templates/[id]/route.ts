@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
 import mongoose from "mongoose";
-import { ensureAppData } from "@/server/ensure-app-data";
 import { LeadModel, TemplateModel } from "@/server/db/models";
+import { requireCurrentUserId } from "@/server/auth/session";
+import { ensureUserSeeded } from "@/server/services/seed-defaults";
 
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function PATCH(req: Request, ctx: Ctx) {
   try {
-    await ensureAppData();
+    const userId = await requireCurrentUserId();
+    await ensureUserSeeded(userId);
     const { id } = await ctx.params;
     if (!mongoose.isValidObjectId(id)) {
       return NextResponse.json({ error: "Invalid id" }, { status: 400 });
@@ -25,7 +27,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
     if (typeof body.body === "string") patch.body = body.body;
     if (typeof body.categoryTag === "string") patch.categoryTag = body.categoryTag;
     if (typeof body.order === "number") patch.order = body.order;
-    const doc = await TemplateModel.findByIdAndUpdate(id, patch, { new: true }).lean();
+    const doc = await TemplateModel.findOneAndUpdate({ _id: id, userId }, patch, { new: true }).lean();
     if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json({ item: doc });
   } catch (e) {
@@ -36,19 +38,20 @@ export async function PATCH(req: Request, ctx: Ctx) {
 
 export async function DELETE(_req: Request, ctx: Ctx) {
   try {
-    await ensureAppData();
+    const userId = await requireCurrentUserId();
+    await ensureUserSeeded(userId);
     const { id } = await ctx.params;
     if (!mongoose.isValidObjectId(id)) {
       return NextResponse.json({ error: "Invalid id" }, { status: 400 });
     }
-    const count = await TemplateModel.countDocuments();
+    const count = await TemplateModel.countDocuments({ userId });
     if (count <= 1) {
       return NextResponse.json({ error: "Cannot delete the last template" }, { status: 400 });
     }
-    const fallback = await TemplateModel.findOne({ _id: { $ne: id } }).sort({ order: 1 }).select("_id");
+    const fallback = await TemplateModel.findOne({ _id: { $ne: id }, userId }).sort({ order: 1 }).select("_id");
     if (!fallback) return NextResponse.json({ error: "No fallback template" }, { status: 500 });
-    await LeadModel.updateMany({ templateId: id }, { templateId: fallback._id });
-    const doc = await TemplateModel.findByIdAndDelete(id).lean();
+    await LeadModel.updateMany({ templateId: id, userId }, { templateId: fallback._id });
+    const doc = await TemplateModel.findOneAndDelete({ _id: id, userId }).lean();
     if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json({ ok: true });
   } catch (e) {

@@ -2,6 +2,7 @@ import mongoose, { Schema, type InferSchemaType } from "mongoose";
 
 const appSettingsSchema = new Schema(
   {
+    userId: { type: Schema.Types.ObjectId, ref: "User", required: true, unique: true, index: true },
     locationAddress: { type: String, default: "El Paso, TX" },
     radiusMiles: { type: Number, default: 50 },
     websiteFilter: {

@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
-import { ensureAppData } from "@/server/ensure-app-data";
+import { requireCurrentUserId } from "@/server/auth/session";
+import { ensureUserSeeded } from "@/server/services/seed-defaults";
 
 export async function GET() {
   try {
-    await ensureAppData();
+    const userId = await requireCurrentUserId();
+    await ensureUserSeeded(userId);
     return NextResponse.json({ ok: true });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Bootstrap failed";

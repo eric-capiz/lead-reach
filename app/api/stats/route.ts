@@ -1,16 +1,17 @@
 import { NextResponse } from "next/server";
-import { ensureAppData } from "@/server/ensure-app-data";
 import { LeadModel } from "@/server/db/models";
-
-const realOnly = { isSample: { $ne: true } } as const;
+import { requireCurrentUserId } from "@/server/auth/session";
+import { ensureUserSeeded } from "@/server/services/seed-defaults";
 
 export async function GET() {
   try {
-    await ensureAppData();
+    const userId = await requireCurrentUserId();
+    await ensureUserSeeded(userId);
     const [total, noWebsite, emailsFound, socialMatches, messagesSent] = await Promise.all([
-      LeadModel.countDocuments(realOnly),
+      LeadModel.countDocuments({ userId, isSample: { $ne: true } }),
       LeadModel.countDocuments({
-        ...realOnly,
+        userId,
+        isSample: { $ne: true },
         $or: [
           { websiteStatus: "No website" },
           { websiteUri: null },
@@ -18,17 +19,19 @@ export async function GET() {
         ],
       }),
       LeadModel.countDocuments({
-        ...realOnly,
+        userId,
+        isSample: { $ne: true },
         email: { $type: "string", $regex: /\S/ },
       }),
       LeadModel.countDocuments({
-        ...realOnly,
+        userId,
+        isSample: { $ne: true },
         $or: [
           { instagram: { $nin: [null, ""] } },
           { facebook: { $nin: [null, ""] } },
         ],
       }),
-      LeadModel.countDocuments({ ...realOnly, status: "sent" }),
+      LeadModel.countDocuments({ userId, isSample: { $ne: true }, status: "sent" }),
     ]);
     return NextResponse.json({
       stats: {

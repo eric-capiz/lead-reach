@@ -5,8 +5,12 @@ import {
   LeadModel,
   MergeFieldModel,
   TemplateModel,
+  UserModel,
 } from "@/server/db/models";
 import { syncOwnerMergeFieldsAndCleanup } from "@/server/services/sync-owner-merge-fields";
+import bcrypt from "bcryptjs";
+import mongoose from "mongoose";
+import { migrateLegacyUniqueIndexesToUserOwned } from "@/server/services/migrate-legacy-unique-indexes";
 
 const DEFAULT_CATEGORIES = [
   "Barbers",
@@ -82,34 +86,55 @@ I'm {{myName}}. Florists thrive when seasonal galleries read effortlessly.
 
 let ensureSeededInFlight: Promise<void> | null = null;
 
-async function runEnsureSeeded(): Promise<void> {
+export async function ensureUserSeeded(userId: mongoose.Types.ObjectId | string): Promise<void> {
   await connectDB();
+  await migrateLegacyUniqueIndexesToUserOwned();
 
-  if ((await AppSettingsModel.countDocuments()) === 0) {
+  // Settings
+  if ((await AppSettingsModel.countDocuments({ userId })) === 0) {
     await AppSettingsModel.create({
+      userId,
       locationAddress: "El Paso, TX",
       radiusMiles: 50,
       websiteFilter: "no_website",
     });
   }
 
-  if ((await CategoryModel.countDocuments()) === 0) {
+  // Categories
+  if ((await CategoryModel.countDocuments({ userId })) === 0) {
     await CategoryModel.insertMany(
-      DEFAULT_CATEGORIES.map((name, order) => ({ name, order })),
+      DEFAULT_CATEGORIES.map((name, order) => ({ userId, name, order })),
     );
   }
 
-  if ((await MergeFieldModel.countDocuments()) === 0) {
-    await MergeFieldModel.insertMany(DEFAULT_MERGE_FIELDS);
+  // Merge fields
+  if ((await MergeFieldModel.countDocuments({ userId })) === 0) {
+    await MergeFieldModel.insertMany(DEFAULT_MERGE_FIELDS.map((f) => ({ ...f, userId })));
   }
 
-  await syncOwnerMergeFieldsAndCleanup();
+  await syncOwnerMergeFieldsAndCleanup(userId);
 
-  if ((await TemplateModel.countDocuments()) === 0) {
-    await TemplateModel.insertMany(DEFAULT_TEMPLATES);
+  // Templates
+  if ((await TemplateModel.countDocuments({ userId })) === 0) {
+    await TemplateModel.insertMany(DEFAULT_TEMPLATES.map((t) => ({ ...t, userId })));
   }
 
-  await LeadModel.deleteMany({ isSample: true });
+  // Keep the UI clean for each user.
+  await LeadModel.deleteMany({ userId, isSample: true });
+}
+
+async function runEnsureSeeded(): Promise<void> {
+  await connectDB();
+
+  // During the transition to auth, keep the app working by seeding defaults
+  // for the built-in "breezy" user.
+  const usernameLower = "breezy";
+  const breezy = await UserModel.findOne({ usernameLower }).select("_id passwordHash");
+  const breezyId =
+    breezy?._id ??
+    (await UserModel.create({ usernameLower, passwordHash: bcrypt.hashSync("breezy", 10) }))._id;
+
+  await ensureUserSeeded(breezyId);
 }
 
 /** One completed run per server process; concurrent calls share the same work. */

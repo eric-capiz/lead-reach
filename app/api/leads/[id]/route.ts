@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
 import mongoose from "mongoose";
-import { ensureAppData } from "@/server/ensure-app-data";
-import { LeadModel } from "@/server/db/models";
+import { LeadModel, TemplateModel } from "@/server/db/models";
+import { requireCurrentUserId } from "@/server/auth/session";
+import { ensureUserSeeded } from "@/server/services/seed-defaults";
 
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function PATCH(req: Request, ctx: Ctx) {
   try {
-    await ensureAppData();
+    const userId = await requireCurrentUserId();
+    await ensureUserSeeded(userId);
     const { id } = await ctx.params;
     if (!mongoose.isValidObjectId(id)) {
       return NextResponse.json({ error: "Invalid id" }, { status: 400 });
@@ -25,6 +27,10 @@ export async function PATCH(req: Request, ctx: Ctx) {
     const patch: Record<string, unknown> = {};
     if (body.templateId === null) patch.templateId = null;
     else if (typeof body.templateId === "string" && mongoose.isValidObjectId(body.templateId)) {
+      const tplOk = await TemplateModel.exists({ _id: body.templateId, userId });
+      if (!tplOk) {
+        return NextResponse.json({ error: "Template not found for this user" }, { status: 400 });
+      }
       patch.templateId = body.templateId;
     }
     if (body.status === "sent" || body.status === "pending" || body.status === "social_ready") {
@@ -36,7 +42,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
     if (typeof body.businessName === "string") patch.businessName = body.businessName.trim();
     if (typeof body.category === "string") patch.category = body.category.trim();
     if (typeof body.phone === "string") patch.phone = body.phone.trim();
-    const doc = await LeadModel.findByIdAndUpdate(id, patch, { new: true })
+    const doc = await LeadModel.findOneAndUpdate({ _id: id, userId }, patch, { new: true })
       .populate("templateId", "name")
       .lean();
     if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -52,12 +58,13 @@ export async function PATCH(req: Request, ctx: Ctx) {
 
 export async function DELETE(_req: Request, ctx: Ctx) {
   try {
-    await ensureAppData();
+    const userId = await requireCurrentUserId();
+    await ensureUserSeeded(userId);
     const { id } = await ctx.params;
     if (!mongoose.isValidObjectId(id)) {
       return NextResponse.json({ error: "Invalid id" }, { status: 400 });
     }
-    const doc = await LeadModel.findByIdAndDelete(id).lean();
+    const doc = await LeadModel.findOneAndDelete({ _id: id, userId }).lean();
     if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json({ ok: true });
   } catch (e) {

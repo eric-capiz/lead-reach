@@ -68,8 +68,8 @@ type SocialSearchApiResponse = {
       query: string | null;
       winningQuery: string | null;
       urls: string[];
-      bingSearchUrlForDisplayQuery?: string;
-      bingSearchAttempts?: { query: string; searchUrl: string }[];
+      serpSearchUrlForDisplayQuery?: string;
+      serpSearchAttempts?: { query: string; searchUrl: string }[];
     };
     instagram: { query: string | null; winningQuery: string | null; urls: string[] };
   };

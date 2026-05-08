@@ -1,18 +1,17 @@
 import { chromium, type Browser } from "playwright";
 import {
-  bingSearchUrlForQuery,
-  collectFromBingHtml,
-  extractAllUrlsFromBingHtml,
+  collectFromYahooHtml,
   extractSocialUrlsFromLinkList,
+  extractYahooSerpUrlsForSample,
   isSerpUrlSampleNoise,
+  serpSearchUrlForQuery,
+  unwrapYahooSerpRedirectUrl,
 } from "@/server/services/google-serp-scrape";
 
 const NAV_MS = 55_000;
 
-/**
- * Headless Chromium + Chrome UA matches interactive Bing (Copilot cards); Firefox UA is better for raw HTTP fetch only.
- */
-const PLAYWRIGHT_BING_USER_AGENT =
+/** Chrome UA — interactive Yahoo SERP matches what users see in the browser. */
+const PLAYWRIGHT_SERP_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 function sleep(ms: number) {
@@ -37,24 +36,24 @@ async function collectFromPage(
   baseOrigin: string,
   network: "facebook" | "instagram",
 ): Promise<{ hrefs: string[]; fromBlob: string[]; serpAllUrls: string[] }> {
-  const context = await browser.newContext({ userAgent: PLAYWRIGHT_BING_USER_AGENT });
+  const context = await browser.newContext({ userAgent: PLAYWRIGHT_SERP_USER_AGENT });
   const page = await context.newPage();
   try {
     await page.setExtraHTTPHeaders({ "Accept-Language": "en-US,en;q=0.9" });
     await page.setViewportSize({ width: 1365, height: 900 });
     await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: NAV_MS });
-    await sleep(2500);
-    /** Same behavior users see: first Bing paint can be wrong until reload completes hydration. */
+    await sleep(900);
+    /** Same behavior users see: first SERP paint can be wrong until reload completes hydration. */
     await page.reload({ waitUntil: "domcontentloaded", timeout: NAV_MS });
-    await sleep(3500);
+    await sleep(1400);
     const rawHrefs = await page.$$eval("a[href]", (els) =>
       els.map((e) => (e as HTMLAnchorElement).getAttribute("href") || "").filter(Boolean),
     );
     const hrefs = rawHrefs.map((h) => toAbsoluteHref(h, baseOrigin));
     const html = await page.content();
     const blob = html.replace(/&amp;/gi, "&");
-    const fromBlob = collectFromBingHtml(blob, network);
-    const serpAllUrls = extractAllUrlsFromBingHtml(blob, network);
+    const fromBlob = collectFromYahooHtml(blob, network);
+    const serpAllUrls = extractYahooSerpUrlsForSample(blob, network);
     return { hrefs, fromBlob, serpAllUrls };
   } finally {
     await page.close();
@@ -63,7 +62,7 @@ async function collectFromPage(
 }
 
 /**
- * Headless Chromium: Bing SERP only, then scrapes anchors + HTML.
+ * Headless Chromium: Yahoo Search SERP, then scrapes anchors + HTML.
  * Skipped on Vercel unless SOCIAL_BROWSER_FORCE=1 (Chromium is usually unavailable there).
  */
 export async function browserHarvestSocialCandidates(
@@ -104,7 +103,7 @@ export async function browserHarvestSocialCandidates(
   const pageUrls: string[] = [];
 
   const mergePageUrl = (raw: string) => {
-    const u = raw.trim();
+    const u = unwrapYahooSerpRedirectUrl(raw.trim());
     if (!u || isSerpUrlSampleNoise(u)) return;
     let key = u;
     try {
@@ -130,12 +129,13 @@ export async function browserHarvestSocialCandidates(
     for (const query of queries) {
       if (candidates.length > 0) break;
 
-      const bUrl = bingSearchUrlForQuery(query);
+      const bUrl = serpSearchUrlForQuery(query);
+      const serpBase = "https://search.yahoo.com/";
       try {
         const { hrefs, fromBlob, serpAllUrls } = await collectFromPage(
           browser,
           bUrl,
-          "https://www.bing.com/",
+          serpBase,
           network,
         );
         for (const h of hrefs) mergePageUrl(h);

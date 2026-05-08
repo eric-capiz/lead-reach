@@ -1,21 +1,22 @@
 /**
- * Social discovery: optional business website first, Bing SERP, then Playwright Bing.
+ * Social discovery: optional business website first, Yahoo SERP (`search.yahoo.com`), then Playwright Chromium.
  * Regex extraction only — no cheerio.
  */
-
-import { Buffer } from "node:buffer";
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
-/** Bing returns an AJAX-only shell (no organic results) to Chrome-like UAs; Firefox + ajaxserp=0 gets server-rendered SERP HTML. */
-export const BING_SERP_FETCH_USER_AGENT =
+/** Firefox UA — Yahoo/Bing-backed SERPs often serve thin shells to pure-Chrome user agents. */
+export const SERP_FETCH_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0";
 
-const PAGE_TIMEOUT_MS = 12_000;
-const BING_SERP_DEBUG_SNIPPET_MAX = 6000;
+/** @deprecated Use {@link SERP_FETCH_USER_AGENT}. */
+export const BING_SERP_FETCH_USER_AGENT = SERP_FETCH_USER_AGENT;
 
-/** First N URLs from merged Bing SERP extraction (noise-filtered, deduped) for logs / API pairing with query. */
+const PAGE_TIMEOUT_MS = 12_000;
+const SERP_DEBUG_SNIPPET_MAX = 6000;
+
+/** First N URLs from SERP extraction (noise-filtered, deduped) for logs / API pairing with query. */
 export const SERP_URL_SAMPLE_MAX = 5;
 
 function decodeQ(raw: string): string {
@@ -113,6 +114,48 @@ function makeCollector(kind: "facebook" | "instagram") {
   return { add, out };
 }
 
+/** Yahoo wraps outbound clicks (`r.search.yahoo.com/.../RU=https%3a%2f%2f…`). */
+export function unwrapYahooSerpRedirectUrl(raw: string): string {
+  const s = raw.trim();
+  if (!s) return s;
+  try {
+    const u = new URL(s.startsWith("//") ? `https:${s}` : s);
+    const host = u.hostname.toLowerCase();
+    if (host !== "r.search.yahoo.com" && !host.endsWith(".search.yahoo.com")) return s;
+
+    const ruUntilRk = u.pathname.match(/\/RU=(.+)\/RK=/i);
+    if (ruUntilRk?.[1]) {
+      try {
+        const decoded = decodeURIComponent(ruUntilRk[1].replace(/\+/g, "%20"));
+        if (/^https?:\/\//i.test(decoded)) return decoded;
+      } catch {
+        /* ignore */
+      }
+    }
+    const ruPath = u.pathname.match(/\/RU=([^/]+)/i);
+    if (ruPath?.[1]) {
+      try {
+        const decoded = decodeURIComponent(ruPath[1].replace(/\+/g, "%20"));
+        if (/^https?:\/\//i.test(decoded)) return decoded;
+      } catch {
+        /* ignore */
+      }
+    }
+    const ruQ = u.searchParams.get("RU");
+    if (ruQ) {
+      try {
+        const decoded = decodeURIComponent(ruQ.replace(/\+/g, "%20"));
+        if (/^https?:\/\//i.test(decoded)) return decoded;
+      } catch {
+        /* ignore */
+      }
+    }
+  } catch {
+    /* keep */
+  }
+  return s;
+}
+
 export function collectFromHtmlBlob(blob: string, kind: "facebook" | "instagram"): string[] {
   const { add, out } = makeCollector(kind);
 
@@ -150,25 +193,26 @@ export function collectFromHtmlBlob(blob: string, kind: "facebook" | "instagram"
     }
   }
 
+  for (const m of blob.matchAll(/https?:\/\/r\.search\.yahoo\.com[^"'\\s<>]{10,4000}/gi)) {
+    const inner = unwrapYahooSerpRedirectUrl(m[0]!);
+    if (inner !== m[0]) add(inner);
+  }
+
   return out;
 }
 
-/** Normalize redirect wrappers (Google /url, Bing /ck/a) then apply the same filters as HTML extraction. */
+/** Normalize redirect wrappers (Google `/url`, Yahoo `r.search.yahoo.com` / `RU=`). */
 export function extractSocialUrlsFromLinkList(urls: string[], kind: "facebook" | "instagram"): string[] {
   const { add, out } = makeCollector(kind);
   for (let raw of urls) {
-    raw = raw.trim();
+    raw = unwrapYahooSerpRedirectUrl(raw.trim());
     if (!raw) continue;
     try {
-      const u = new URL(raw);
+      const u = new URL(raw.startsWith("//") ? `https:${raw}` : raw);
       const host = u.hostname.toLowerCase();
       if (host.includes("google.") && u.pathname === "/url") {
         const q = u.searchParams.get("q") ?? u.searchParams.get("url");
         if (q) raw = decodeURIComponent(q.replace(/\+/g, "%20"));
-      }
-      if (host.includes("bing.com") && u.pathname.includes("/ck/a")) {
-        const decoded = decodeBingCkHref(u.toString());
-        if (decoded) raw = decoded;
       }
     } catch {
       /* keep raw */
@@ -178,66 +222,18 @@ export function extractSocialUrlsFromLinkList(urls: string[], kind: "facebook" |
   return out;
 }
 
-/**
- * After base64 decode, Bing `u` is either a full `https://…` or a **path-only** internal link
- * like `/images/search?q=…`, `/videos/search?q=…` (vertical search tabs). Resolve the latter so
- * `isBingNoiseUrl` can drop them instead of leaving raw `/ck/a` wrappers in the sample.
- */
-function normalizeDecodedBingU(decoded: string): string | null {
-  const t = decoded.trim();
-  if (t.startsWith("https://") || t.startsWith("http://")) return t;
-  if (t.startsWith("//")) return `https:${t}`;
-  if (t.startsWith("/")) {
-    try {
-      return new URL(t, "https://www.bing.com/").href;
-    } catch {
-      return null;
-    }
-  }
-  return null;
+/** Drop obvious SERP chrome / nav URLs before sampling. */
+export function dropSerpNoiseUrls(urls: string[]): string[] {
+  return urls
+    .map((raw) => unwrapYahooSerpRedirectUrl(raw.trim()))
+    .filter((u) => !isSerpUrlSampleNoise(u));
 }
 
-function decodeBingCkHref(rawHref: string): string | null {
-  const href = rawHref.replace(/&amp;/gi, "&");
-  /** Bing uses `u=<base64("https://...")>`; newer SERPs prefix with `a1` → full value `a1aHR0cHM6...`. */
-  const uMatch = href.match(/[?&]u=([^&]+)/);
-  if (!uMatch) return null;
-
-  const tryDecodeB64 = (raw: string): string | null => {
-    try {
-      let b64 = raw;
-      const pad = b64.length % 4;
-      if (pad) b64 += "=".repeat(4 - pad);
-      const inner = Buffer.from(b64, "base64").toString("utf8");
-      return normalizeDecodedBingU(inner);
-    } catch {
-      return null;
-    }
-  };
-
-  try {
-    let payload = decodeURIComponent(uMatch[1]!.replace(/\+/g, "%20"));
-    let out = tryDecodeB64(payload);
-    if (out) return out;
-    const stripped = payload.replace(/^a\d+/, "");
-    if (stripped !== payload) {
-      out = tryDecodeB64(stripped);
-      if (out) return out;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-/** Bing SERP pages link to `/search`, `/images`, CDN assets, etc. Drop those from raw URL dumps. */
-export function dropBingNoiseUrls(urls: string[]): string[] {
-  return urls.filter((raw) => !isSerpUrlSampleNoise(raw));
-}
+/** @deprecated Use {@link dropSerpNoiseUrls}. */
+export const dropBingNoiseUrls = dropSerpNoiseUrls;
 
 /**
- * Filters junk Playwright collects from **every** `<a href>` (logo, `bing.com/#`, `?FORM=`, `javascript:`).
- * Not an encoding issue — manual Bing uses the same `q=`; automation just surfaces nav links first.
+ * Filters junk Playwright collects from **every** `<a href>` (nav bars, `javascript:`, Yahoo internal search links).
  */
 export function isSerpUrlSampleNoise(raw: string): boolean {
   const t = raw.trim();
@@ -251,52 +247,13 @@ export function isSerpUrlSampleNoise(raw: string): boolean {
     const u = new URL(t.startsWith("//") ? `https:${t}` : t);
     if (u.protocol !== "http:" && u.protocol !== "https:") return true;
     const host = u.hostname.replace(/^www\./i, "").toLowerCase();
-    /**
-     * Playwright dumps raw `href`s (`bing.com/ck/a?…`). Those never matched `/images` pathname checks.
-     * Decode `u=` → `/images/search`, videos tab, etc., then apply the same Bing-internal noise rules.
-     */
-    if (host.endsWith("bing.com") && u.pathname.toLowerCase().includes("/ck/a")) {
-      const decoded = decodeBingCkHref(t);
-      if (!decoded) return true;
-      return isBingNoiseUrl(decoded);
-    }
+    const path = u.pathname.toLowerCase();
+    if (host === "search.yahoo.com" && path.startsWith("/search")) return true;
+    if ((host === "yahoo.com" || host.endsWith(".yahoo.com")) && (path === "/" || path === "")) return true;
   } catch {
     return true;
   }
-  return isBingNoiseUrl(t);
-}
-
-function isBingNoiseUrl(raw: string): boolean {
-  const t = raw.trim();
-  if (!t) return true;
-  try {
-    const u = new URL(t.startsWith("//") ? `https:${t}` : t);
-    const host = u.hostname.replace(/^www\./i, "").toLowerCase();
-    if (host === "r.bing.com" || host === "th.bing.com" || host === "sr.bing.com") return true;
-    if (!host.endsWith("bing.com")) return false;
-    const path = u.pathname.toLowerCase();
-    /** Logo / footer / `bing.com/#` / `bing.com/?FORM=…` — not result URLs. */
-    if (path === "/" || path === "") return true;
-    if (path === "/search" || path.startsWith("/search/")) return true;
-    if (path.startsWith("/copilotsearch")) return true;
-    /** Vertical SERP tabs (incl. `/travel/search` flights — same encoded `/ck/a` pattern as images/videos). */
-    if (/^\/(images|videos|news|maps|shop|chat|travel)(\/|$)/i.test(path)) return true;
-    if (path.startsWith("/fd/") || path.startsWith("/profile/history")) return true;
-    return false;
-  } catch {
-    return false;
-  }
-}
-
-/** Prefer `#b_results` so header &lt;h2&gt; nav links (often same `/search?q=…`) are not scraped as results. */
-function sliceBingOrganicRegion(html: string): string {
-  const m = /id=["']b_results["']/i.exec(html);
-  if (!m || m.index === undefined) return html;
-  const start = m.index;
-  const tail = html.slice(start, start + 1_200_000);
-  const endProbe = /<(?:div|aside|section)[^>]*\bid=["']b_(?:context|sidebar)/i.exec(tail);
-  const endIdx = endProbe && endProbe.index !== undefined && endProbe.index > 400 ? endProbe.index : tail.length;
-  return tail.slice(0, endIdx);
+  return false;
 }
 
 function dedupeUrlStrings(urls: string[]): string[] {
@@ -320,112 +277,25 @@ function dedupeUrlStrings(urls: string[]): string[] {
   return out;
 }
 
-/** Full-document plain facebook.com / instagram.com strings (Copilot / pole often outside `#b_results`). */
+/** Plain facebook.com / instagram.com strings anywhere in the SERP HTML. */
 function plainSocialUrlsFromFullSerp(html: string, network: "facebook" | "instagram"): string[] {
   const blob = html.replace(/&amp;/gi, "&").replace(/\\\//g, "/");
   return collectFromHtmlBlob(blob, network);
 }
 
-/** Every destination URL found in Bing SERP HTML (decoded ck/a + visible hrefs), before FB/IG filtering. */
-export function extractAllUrlsFromBingHtml(
-  html: string,
-  network?: "facebook" | "instagram",
-): string[] {
-  const scoped = sliceBingOrganicRegion(html);
-  const blob = scoped.replace(/&amp;/gi, "&").replace(/\\\//g, "/");
-  const found: string[] = [];
-
-  const pushRaw = (hrefRaw: string) => {
-    let h = hrefRaw.trim();
-    if (!h) return;
-    if (h.startsWith("/ck/a")) h = `https://www.bing.com${h}`;
-    if (h.startsWith("//")) h = `https:${h}`;
-    if (h.startsWith("/") && !h.startsWith("//") && h.includes("bing.com") === false) {
-      try {
-        h = new URL(h, "https://www.bing.com/").href;
-      } catch {
-        /* keep */
-      }
-    }
-    const decoded =
-      h.includes("bing.com") && h.includes("/ck/a") ? decodeBingCkHref(h) : null;
-    const target = decoded ?? (h.startsWith("http") ? h : null);
-    if (!target || isBingNoiseUrl(target)) return;
-    found.push(target);
-  };
-
-  for (const m of blob.matchAll(/https?:\/\/(?:www\.)?bing\.com\/ck\/a\?[^\s"'<>]+/gi)) pushRaw(m[0]!);
-  for (const m of blob.matchAll(/\/ck\/a\?[^\s"'<>]+/gi)) pushRaw(m[0]!);
-  for (const m of blob.matchAll(/<h2[^>]*>\s*<a[^>]+href=(["'])([^"']+)\1/gi)) pushRaw(m[2]!);
-  for (const m of blob.matchAll(/class=["']tilk["'][^>]*href=(["'])([^"']+)\1/gi)) pushRaw(m[2]!);
-  for (const m of blob.matchAll(/<cite[^>]*>\s*<a[^>]+href=(["'])([^"']+)\1/gi)) pushRaw(m[2]!);
-
-  const plainFirst = network ? plainSocialUrlsFromFullSerp(html, network) : [];
-  return dedupeUrlStrings([...plainFirst, ...found]);
-}
-
-export function collectFromBingHtml(html: string, kind: "facebook" | "instagram"): string[] {
-  const fullBlob = html.replace(/&amp;/gi, "&").replace(/\\\//g, "/");
-  const scoped = sliceBingOrganicRegion(html);
-  const blob = scoped.replace(/&amp;/gi, "&").replace(/\\\//g, "/");
-  const { add, out } = makeCollector(kind);
-
-  /** Copilot / rich answers often sit outside `#b_results`; scan the full HTML first so real profiles beat generic “Horizon” web hits. */
-  for (const x of collectFromHtmlBlob(fullBlob, kind)) {
-    add(x);
+/** Prefer Yahoo organic region in logs — the head is huge and hides whether extraction ran on results. */
+function yahooSerpDebugSnippet(html: string): string {
+  const markers = [/id=["']web["']/i, /searchCenterMiddle/i, /compTitle/i];
+  for (const re of markers) {
+    const m = re.exec(html);
+    if (m?.index !== undefined) return html.slice(m.index, m.index + SERP_DEBUG_SNIPPET_MAX);
   }
-
-  const absorbCk = (hrefRaw: string) => {
-    let h = hrefRaw.trim();
-    if (h.startsWith("/ck/a")) h = `https://www.bing.com${h}`;
-    if (h.startsWith("//")) h = `https:${h}`;
-    const target = decodeBingCkHref(h);
-    if (target) add(target);
-  };
-
-  // Absolute ck/a (Playwright sometimes emits protocol-relative or www-less hosts).
-  for (const m of blob.matchAll(/https?:\/\/(?:www\.)?bing\.com\/ck\/a\?[^\s"'<>]+/gi)) {
-    absorbCk(m[0]!);
-  }
-  // Relative ck/a in raw HTML (common in DOM snapshots).
-  for (const m of blob.matchAll(/\/ck\/a\?[^\s"'<>]+/gi)) {
-    absorbCk(m[0]!);
-  }
-
-  for (const m of blob.matchAll(/<h2[^>]*>\s*<a[^>]+href=(["'])([^"']+)\1/gi)) {
-    const href = m[2]!;
-    if (href.includes("/ck/a")) {
-      absorbCk(href);
-    } else if (href.startsWith("http") || href.startsWith("//")) {
-      add(href.startsWith("//") ? `https:${href}` : href);
-    }
-  }
-
-  return out;
-}
-
-/** SERP URL that returns HTML with organic listings for server-side fetch (see BING_SERP_FETCH_USER_AGENT). */
-export function bingSearchUrlForQuery(query: string): string {
-  const u = new URL("https://www.bing.com/search");
-  u.searchParams.set("q", query);
-  u.searchParams.set("count", "10");
-  u.searchParams.set("ajaxserp", "0");
-  return u.toString();
-}
-
-/** Prefer `#b_results` in logs — the head is huge and hides whether extraction ran on organic links. */
-function bingSerpDebugSnippet(html: string): string {
-  const marker = /id=["']b_results["']/i;
-  const m = marker.exec(html);
-  if (m && m.index !== undefined) {
-    return html.slice(m.index, m.index + BING_SERP_DEBUG_SNIPPET_MAX);
-  }
-  return html.slice(0, BING_SERP_DEBUG_SNIPPET_MAX);
+  return html.slice(0, SERP_DEBUG_SNIPPET_MAX);
 }
 
 /**
  * First comma-separated segment often mixes business name + street; digits usually start the street
- * address ("Horizon Star Bakery 14000 Horizon Blvd"). Truncating before the first digit avoids Bing
+ * address ("Horizon Star Bakery 14000 Horizon Blvd"). Truncating before the first digit avoids SERPs
  * matching street tokens like "Horizon" to unrelated brands.
  */
 function businessNameGuessFromBase(base: string): string {
@@ -448,7 +318,7 @@ export function cityGuessFromLocation(location: string): string | null {
 }
 
 /**
- * Text used for Bing keyword queries: **business name only** when present (no street address).
+ * Text used for SERP queries: **business name only** when present (no street address).
  * If the name is missing/too short, falls back to a city guess or the trimmed location string.
  */
 export function socialSearchStem(businessName: string, location: string): string | null {
@@ -484,7 +354,7 @@ function searchQueriesForBase(base: string, network: "facebook" | "instagram"): 
           .trim()
       : "";
 
-  /** Prefer Bing `site:` queries — organic results often lack facebook.com/instagram.com entirely. */
+  /** Prefer `site:` queries — organic results often lack facebook.com/instagram.com entirely. */
   const siteNameCity =
     nameGuess.length >= 3 && cityTail.length >= 2
       ? `${site} ${nameGuess} ${cityTail}`
@@ -559,20 +429,39 @@ async function fetchPageHtml(
   }
 }
 
-/** Pause between two Bing GETs — first HTML is often wrong; second mirrors a browser refresh. */
-const BING_SERP_REFRESH_GAP_MS = 750;
+/** Yahoo Search (`p=` query param). */
+export function yahooSearchUrlForQuery(query: string): string {
+  const u = new URL("https://search.yahoo.com/search");
+  u.searchParams.set("p", query);
+  return u.toString();
+}
 
-async function fetchBingSearchHtml(query: string): Promise<{ html: string; status: number }> {
-  const url = bingSearchUrlForQuery(query);
-  const ua = BING_SERP_FETCH_USER_AGENT;
-  /** Bing commonly serves junk/reordered organic hits on first paint; manual refresh fixes it — fetch twice. */
-  await fetchPageHtml(url, { userAgent: ua });
-  await new Promise<void>((r) => setTimeout(r, BING_SERP_REFRESH_GAP_MS));
-  return fetchPageHtml(url, { userAgent: ua });
+export function serpSearchUrlForQuery(query: string): string {
+  return yahooSearchUrlForQuery(query);
+}
+
+async function fetchYahooSearchHtml(query: string): Promise<{ html: string; status: number }> {
+  const url = yahooSearchUrlForQuery(query);
+  return fetchPageHtml(url, { userAgent: SERP_FETCH_USER_AGENT });
+}
+
+/** Regex-only extraction from Yahoo HTML (plain instagram.com / facebook.com in document). */
+export function extractYahooSerpUrlsForSample(html: string, network: "facebook" | "instagram"): string[] {
+  return dedupeUrlStrings(plainSocialUrlsFromFullSerp(html, network));
+}
+
+/** Yahoo SERP: rely on full-document social URL regex (same as embedded blob path). */
+export function collectFromYahooHtml(html: string, kind: "facebook" | "instagram"): string[] {
+  const fullBlob = html.replace(/&amp;/gi, "&").replace(/\\\//g, "/");
+  const { add, out } = makeCollector(kind);
+  for (const x of collectFromHtmlBlob(fullBlob, kind)) {
+    add(x);
+  }
+  return out;
 }
 
 type EngineAttempt = {
-  engine: "bing";
+  engine: "yahoo";
   query: string;
   status: number;
   candidateCount: number;
@@ -585,7 +474,7 @@ async function collectFromSearchEngines(
   candidates: string[];
   googleStatus: number;
   googleWasChallenge: boolean;
-  fetchSource: "bing" | "none";
+  fetchSource: "yahoo" | "none";
   htmlOut: string;
   statusOut: number;
   searchUrl: string;
@@ -602,25 +491,25 @@ async function collectFromSearchEngines(
   let winningQuery: string | null = null;
 
   for (const query of queries) {
-    const bUrl = bingSearchUrlForQuery(query);
-    const { html: bHtml, status: bSt } = await fetchBingSearchHtml(query);
-    const bCand = collectFromBingHtml(bHtml, network);
-    attempts.push({ engine: "bing", query, status: bSt, candidateCount: bCand.length });
+    const pageUrl = yahooSearchUrlForQuery(query);
+    const { html: bHtml, status: bSt } = await fetchYahooSearchHtml(query);
+    const bCand = collectFromYahooHtml(bHtml, network);
+    attempts.push({ engine: "yahoo", query, status: bSt, candidateCount: bCand.length });
     lastHtml = bHtml;
     lastStatus = bSt;
-    lastSearchUrl = bUrl;
+    lastSearchUrl = pageUrl;
     if (bCand.length > 0) {
       winningQuery = query;
       /** Only this page’s links — merging across query variants mixed unrelated SERPs with the stem query label. */
-      const serpUrlsRaw = extractAllUrlsFromBingHtml(bHtml, network);
+      const serpUrlsRaw = extractYahooSerpUrlsForSample(bHtml, network);
       return {
         candidates: bCand,
         googleStatus,
         googleWasChallenge,
-        fetchSource: "bing",
+        fetchSource: "yahoo",
         htmlOut: bHtml,
         statusOut: bSt,
-        searchUrl: bUrl,
+        searchUrl: pageUrl,
         attempts,
         winningQuery,
         serpUrlsRaw,
@@ -628,7 +517,7 @@ async function collectFromSearchEngines(
     }
   }
 
-  const serpUrlsRaw = extractAllUrlsFromBingHtml(lastHtml, network);
+  const serpUrlsRaw = extractYahooSerpUrlsForSample(lastHtml, network);
 
   return {
     candidates: [],
@@ -650,14 +539,15 @@ export type SocialScrapeFetchResult = {
   htmlLength: number;
   htmlSnippet: string;
   searchUrl: string;
-  fetchSource: "bing" | "website" | "mixed" | "playwright" | "none";
+  fetchSource: "yahoo" | "website" | "mixed" | "playwright" | "none";
   googleWasChallenge: boolean;
-  bingSearchUrl?: string;
+  /** Winning SERP page URL when results came from Yahoo HTTP fetch (not Playwright-only). */
+  serpSearchUrl?: string;
   websiteTried: boolean;
   websiteStatus?: number;
   engineAttempts?: EngineAttempt[];
   winningQuery?: string | null;
-  /** Unfiltered URLs collected from Bing HTML + Playwright page (decoded redirects and anchor hrefs). */
+  /** URLs collected from Yahoo SERP HTML + Playwright (redirect-unwrapped; filtered to FB/IG hosts for samples). */
   urlsFromSearchResults: string[];
 };
 
@@ -708,14 +598,13 @@ export async function fetchSocialCandidatesForQuery(
   let winningQ: string | null = engine.winningQuery;
   let htmlOutLen = engine.htmlOut.length;
   let searchUrlOut = engine.searchUrl;
-  let htmlSnippet = bingSerpDebugSnippet(engine.htmlOut);
+  let htmlSnippet = yahooSerpDebugSnippet(engine.htmlOut);
 
   let playwrightSerpUrls: string[] = [];
 
   /**
-   * Plain HTTP Bing often has **no** `facebook.com` in HTML (Copilot/answers are JS); Playwright sees the real SERP.
-   * If the lead’s website already contributed a Facebook URL, `merged` was non‑empty and we **skipped** Playwright —
-   * leaving only junk `/ck/a` decoding from HTTP. Always run Playwright when the Bing engine found zero FB hits.
+   * Plain HTTP often omits social URLs (JS-heavy SERP). Playwright loads Yahoo like a real browser.
+   * For Facebook, also run when HTTP SERP returned zero candidates (merged may still be empty).
    */
   const runPlaywright =
     merged.length === 0 || (network === "facebook" && engine.candidates.length === 0);
@@ -740,16 +629,37 @@ export async function fetchSocialCandidatesForQuery(
     }
   }
 
-  let serpUrlPool = [...engine.serpUrlsRaw, ...playwrightSerpUrls];
+  let serpUrlPool = [...engine.serpUrlsRaw, ...playwrightSerpUrls].map(unwrapYahooSerpRedirectUrl);
   if (fetchSource === "playwright" && playwrightSerpUrls.length > 0) {
-    /** HTTP Bing already failed; don’t mix last failed SERP HTML with the Chromium Bing page. */
-    serpUrlPool = playwrightSerpUrls;
+    serpUrlPool = playwrightSerpUrls.map(unwrapYahooSerpRedirectUrl);
   } else if (network === "facebook" && playwrightSerpUrls.length > 0) {
-    /** Chromium Copilot row usually has the Page link; raw HTTP HTML often does not. */
-    serpUrlPool = playwrightSerpUrls;
+    serpUrlPool = playwrightSerpUrls.map(unwrapYahooSerpRedirectUrl);
+  } else if (network === "instagram" && playwrightSerpUrls.length > 0) {
+    serpUrlPool = playwrightSerpUrls.map(unwrapYahooSerpRedirectUrl);
   }
-  let sampleUrls = dropBingNoiseUrls(dedupeUrlStrings(serpUrlPool));
-  /** Same scraper for IG/FB; Bing’s web column for “… facebook” is far noisier than “… instagram”. Float real hosts first. */
+
+  let sampleUrls = dropSerpNoiseUrls(dedupeUrlStrings(serpUrlPool));
+
+  const socialHostOk =
+    network === "facebook"
+      ? (u: string) => {
+          try {
+            const h = new URL(u).hostname.replace(/^www\./i, "").toLowerCase();
+            return h.includes("facebook.") || h.endsWith(".fb.com") || h === "fb.com";
+          } catch {
+            return false;
+          }
+        }
+      : (u: string) => {
+          try {
+            return new URL(u).hostname.toLowerCase().includes("instagram.");
+          } catch {
+            return false;
+          }
+        };
+
+  sampleUrls = sampleUrls.filter(socialHostOk);
+
   if (network === "facebook") {
     const pri = sampleUrls.filter((u) => /facebook\.com|fb\.com/i.test(u));
     const rest = sampleUrls.filter((u) => !/facebook\.com|fb\.com/i.test(u));
@@ -769,7 +679,7 @@ export async function fetchSocialCandidatesForQuery(
     searchUrl: searchUrlOut,
     fetchSource,
     googleWasChallenge: engine.googleWasChallenge,
-    bingSearchUrl: fetchSource === "bing" ? engine.searchUrl : undefined,
+    serpSearchUrl: fetchSource === "yahoo" ? engine.searchUrl : undefined,
     websiteTried: !!normalizedSite,
     websiteStatus,
     engineAttempts: engine.attempts,
@@ -789,4 +699,64 @@ export function pickBestSocialCandidate(
 
 export function isLikelyProfileUrl(url: string, kind: "facebook" | "instagram"): boolean {
   return kind === "facebook" ? looseFacebookOk(url) : looseInstagramOk(url);
+}
+
+/** Normalize and validate a social URL for persistence (unwrap Yahoo hops, strip hash, trim slash). */
+function canonicalSocialProfileUrl(raw: string, network: "facebook" | "instagram"): string | null {
+  const unwrapped = unwrapYahooSerpRedirectUrl(raw.trim());
+  if (!unwrapped) return null;
+  try {
+    const url = new URL(unwrapped.startsWith("//") ? `https:${unwrapped}` : unwrapped);
+    url.hash = "";
+    let href = url.href;
+    if (href.endsWith("/")) href = href.slice(0, -1);
+    return isLikelyProfileUrl(href, network) ? href : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Lower rank = pick first (prefer `/pagename` over `/posts/…`, `/p/…`, etc.). */
+function serpSocialPathRank(url: string, network: "facebook" | "instagram"): number {
+  try {
+    const p = new URL(url).pathname.replace(/\/$/, "").toLowerCase();
+    if (network === "facebook") {
+      if (/\/(posts|videos|watch|reel|photo\.php|story\.php|share|dialog)/.test(p)) return 10;
+      if (/^\/[^/]+$/.test(p)) return 0;
+      return 5;
+    }
+    if (/\/(p|reel|tv|stories)\//.test(p)) return 10;
+    if (/^\/[^/]+$/.test(p)) return 0;
+    return 5;
+  } catch {
+    return 99;
+  }
+}
+
+/**
+ * Prefer the SERP sample order after unwrap + path ranking; validate with {@link isLikelyProfileUrl}
+ * (not only {@link extractSocialUrlsFromLinkList}, which can skip edge-case URLs).
+ */
+export function pickFirstProfileUrlFromSerpUrls(
+  urls: string[],
+  network: "facebook" | "instagram",
+): string | null {
+  const cleaned = urls
+    .filter((x): x is string => typeof x === "string")
+    .map((x) => unwrapYahooSerpRedirectUrl(x.trim()))
+    .filter(Boolean);
+
+  const sorted = [...cleaned].sort((a, b) => serpSocialPathRank(a, network) - serpSocialPathRank(b, network));
+
+  for (const raw of sorted) {
+    const c = canonicalSocialProfileUrl(raw, network);
+    if (c) return c;
+  }
+
+  for (const raw of sorted) {
+    const got = extractSocialUrlsFromLinkList([raw], network);
+    if (got[0]) return got[0]!;
+  }
+
+  return null;
 }

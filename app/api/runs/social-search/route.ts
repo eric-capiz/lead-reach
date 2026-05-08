@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
+import mongoose from "mongoose";
 import { LeadModel, SocialResolveCacheModel } from "@/server/db/models";
 import { requireCurrentUserId } from "@/server/auth/session";
 import {
-  bingSearchUrlForQuery,
   fetchSocialCandidatesForQuery,
   pickBestSocialCandidate,
+  pickFirstProfileUrlFromSerpUrls,
+  serpSearchUrlForQuery,
   socialSearchStem,
 } from "@/server/services/google-serp-scrape";
 import {
@@ -107,10 +109,10 @@ export async function POST(req: Request) {
       query: string | null;
       winningQuery: string | null;
       urls: string[];
-      /** Facebook only: exact Bing URL for `query` (same params our fetch uses: count, ajaxserp). */
-      bingSearchUrlForDisplayQuery?: string;
-      /** Facebook only: each HTTP Bing attempt in order — compare with browser to see why e.g. horizonblue appears. */
-      bingSearchAttempts?: { query: string; searchUrl: string }[];
+      /** Facebook only: Yahoo SERP URL for `query`. */
+      serpSearchUrlForDisplayQuery?: string;
+      /** Facebook only: each HTTP SERP attempt in order. */
+      serpSearchAttempts?: { query: string; searchUrl: string }[];
     };
     const serpSampleFb: SerpUrlSample = { query: null, winningQuery: null, urls: [] };
     const serpSampleIg: SerpUrlSample = { query: null, winningQuery: null, urls: [] };
@@ -118,7 +120,7 @@ export async function POST(req: Request) {
     const needFb = !hasLeadSocialUrl(lead.facebook);
     const needIg = !hasLeadSocialUrl(lead.instagram);
     const patch: { facebook?: string; instagram?: string } = {};
-    const placeId = lead.googlePlaceId.trim();
+    const placeId = String(lead.googlePlaceId ?? "").trim();
     const cached = await SocialResolveCacheModel.findOne({ placeId }).lean();
 
     const socialDebug: Record<string, unknown> = {
@@ -127,7 +129,7 @@ export async function POST(req: Request) {
       placeId,
       cacheHitFacebook: false,
       cacheHitInstagram: false,
-      /** Bing queries use business name only when available — not the full address line. */
+      /** SERP queries use business name only when available — not the full address line. */
       searchStem,
       /** Raw name + location as stored on the lead (may include street address). */
       leadLine,
@@ -156,20 +158,23 @@ export async function POST(req: Request) {
           businessName: biz || null,
           location: loc || null,
         });
-        const fb = pickBestSocialCandidate(r.candidates, biz, loc, "facebook");
+        const fbSerp = pickFirstProfileUrlFromSerpUrls(r.urlsFromSearchResults, "facebook");
+        const fb =
+          fbSerp ?? pickBestSocialCandidate(r.candidates, biz, loc, "facebook");
         serpSampleFb.query = q;
         serpSampleFb.winningQuery = r.winningQuery ?? null;
         serpSampleFb.urls = r.urlsFromSearchResults;
-        serpSampleFb.bingSearchUrlForDisplayQuery = bingSearchUrlForQuery(q);
-        serpSampleFb.bingSearchAttempts = (r.engineAttempts ?? [])
-          .filter((a) => a.engine === "bing")
-          .map((a) => ({ query: a.query, searchUrl: bingSearchUrlForQuery(a.query) }));
+        serpSampleFb.serpSearchUrlForDisplayQuery = serpSearchUrlForQuery(q);
+        serpSampleFb.serpSearchAttempts = (r.engineAttempts ?? []).map((a) => ({
+          query: a.query,
+          searchUrl: serpSearchUrlForQuery(a.query),
+        }));
         socialDebug.facebook = {
           query: q,
           googleStatus: r.googleStatus,
           fetchSource: r.fetchSource,
           googleWasChallenge: r.googleWasChallenge,
-          bingSearchUrl: r.bingSearchUrl,
+          serpSearchUrl: r.serpSearchUrl,
           websiteTried: r.websiteTried,
           websiteStatus: r.websiteStatus,
           winningQuery: r.winningQuery,
@@ -178,6 +183,7 @@ export async function POST(req: Request) {
           searchUrl: r.searchUrl,
           candidates: r.candidates,
           chosen: fb,
+          chosenFromSerpSample: !!fbSerp,
         };
         if (fb) patch.facebook = fb;
       } catch (e) {
@@ -195,7 +201,9 @@ export async function POST(req: Request) {
           businessName: biz || null,
           location: loc || null,
         });
-        const ig = pickBestSocialCandidate(r.candidates, biz, loc, "instagram");
+        const igSerp = pickFirstProfileUrlFromSerpUrls(r.urlsFromSearchResults, "instagram");
+        const ig =
+          igSerp ?? pickBestSocialCandidate(r.candidates, biz, loc, "instagram");
         serpSampleIg.query = q;
         serpSampleIg.winningQuery = r.winningQuery ?? null;
         serpSampleIg.urls = r.urlsFromSearchResults;
@@ -204,7 +212,7 @@ export async function POST(req: Request) {
           googleStatus: r.googleStatus,
           fetchSource: r.fetchSource,
           googleWasChallenge: r.googleWasChallenge,
-          bingSearchUrl: r.bingSearchUrl,
+          serpSearchUrl: r.serpSearchUrl,
           websiteTried: r.websiteTried,
           websiteStatus: r.websiteStatus,
           winningQuery: r.winningQuery,
@@ -213,6 +221,7 @@ export async function POST(req: Request) {
           searchUrl: r.searchUrl,
           candidates: r.candidates,
           chosen: ig,
+          chosenFromSerpSample: !!igSerp,
         };
         if (ig) patch.instagram = ig;
       } catch (e) {
@@ -226,12 +235,26 @@ export async function POST(req: Request) {
       const $set: { facebook?: string; instagram?: string } = {};
       if (patch.facebook) $set.facebook = patch.facebook;
       if (patch.instagram) $set.instagram = patch.instagram;
-      await SocialResolveCacheModel.updateOne({ placeId }, { $set }, { upsert: true });
+      if (placeId) {
+        await SocialResolveCacheModel.updateOne({ placeId }, { $set }, { upsert: true });
+      }
     }
 
+    let leadUpdateMatched: boolean | undefined;
     if (Object.keys(patch).length > 0) {
-      await LeadModel.updateOne({ _id: lead._id, userId }, { $set: patch });
+      const lid = new mongoose.Types.ObjectId(String(lead._id));
+      const uid = new mongoose.Types.ObjectId(userId);
+      const leadRes = await LeadModel.updateOne({ _id: lid, userId: uid }, { $set: patch });
+      leadUpdateMatched = leadRes.matchedCount > 0;
+      if (!leadUpdateMatched) {
+        console.error("[social-search] Lead update matched 0 rows", {
+          leadId: String(lid),
+          userId: String(uid),
+          patchFields: Object.keys(patch),
+        });
+      }
     }
+    socialDebug.leadUpdateMatched = leadUpdateMatched;
 
     const urlsFromSearchResults = {
       facebook: serpSampleFb,
@@ -247,8 +270,8 @@ export async function POST(req: Request) {
             query: serpSampleFb.query,
             winningQuery: serpSampleFb.winningQuery,
             urls: serpSampleFb.urls,
-            bingSearchUrlForDisplayQuery: serpSampleFb.bingSearchUrlForDisplayQuery,
-            bingSearchAttempts: serpSampleFb.bingSearchAttempts,
+            serpSearchUrlForDisplayQuery: serpSampleFb.serpSearchUrlForDisplayQuery,
+            serpSearchAttempts: serpSampleFb.serpSearchAttempts,
           },
           instagram: {
             query: serpSampleIg.query,

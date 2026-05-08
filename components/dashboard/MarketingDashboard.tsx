@@ -94,7 +94,13 @@ function normalizeLead(raw: Record<string, unknown>): LeadApi {
   };
 }
 
-export function MarketingDashboard({ showSetupPopup }: { showSetupPopup?: boolean }) {
+export function MarketingDashboard({
+  showSetupPopup,
+  currentUsername,
+}: {
+  showSetupPopup?: boolean;
+  currentUsername?: string;
+}) {
   const router = useRouter();
   const [tab, setTab] = useState<TabId>("overview");
   const [bootError, setBootError] = useState<string | null>(null);
@@ -136,6 +142,8 @@ export function MarketingDashboard({ showSetupPopup }: { showSetupPopup?: boolea
 
   const [categories, setCategories] = useState<CategoryRow[]>([]);
   const [locDraft, setLocDraft] = useState("");
+  const [useLocationBusy, setUseLocationBusy] = useState(false);
+  const [useLocationError, setUseLocationError] = useState<string | null>(null);
   const [radiusDraft, setRadiusDraft] = useState(50);
   const [filterDraft, setFilterDraft] = useState<WebsiteFilter>("no_website");
 
@@ -177,6 +185,13 @@ export function MarketingDashboard({ showSetupPopup }: { showSetupPopup?: boolea
   const [newMergeValue, setNewMergeValue] = useState("");
   const [deleteAllModalOpen, setDeleteAllModalOpen] = useState(false);
   const [deleteAllBusy, setDeleteAllBusy] = useState(false);
+  const [newTemplateModalOpen, setNewTemplateModalOpen] = useState(false);
+  const [newTemplateName, setNewTemplateName] = useState("");
+  const [newTemplateBusy, setNewTemplateBusy] = useState(false);
+  const [deleteTemplateModalOpen, setDeleteTemplateModalOpen] = useState(false);
+  const [deleteTemplateBusy, setDeleteTemplateBusy] = useState(false);
+  const [leadDeleteTarget, setLeadDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [deleteLeadBusy, setDeleteLeadBusy] = useState(false);
 
   const confirmSetup = async () => {
     try {
@@ -324,6 +339,15 @@ export function MarketingDashboard({ showSetupPopup }: { showSetupPopup?: boolea
     return templates.find((t) => t._id === selectedTplId) ?? templates[0] ?? null;
   }, [templates, selectedTplId]);
 
+  useEffect(() => {
+    if (tplDirty) return;
+    const row = templates.find((t) => t._id === selectedTplId) ?? templates[0] ?? null;
+    if (!row) return;
+    setTplName(row.name);
+    setTplSubject(row.subject);
+    setTplBody(row.body);
+  }, [selectedTplId, templates, tplDirty]);
+
   const previewMerged = useMemo(() => {
     if (!selectedTemplate) return "";
     const map = buildMergeMap(
@@ -352,6 +376,38 @@ export function MarketingDashboard({ showSetupPopup }: { showSetupPopup?: boolea
     }
   };
 
+  const useMyLocation = async () => {
+    if (!("geolocation" in navigator)) {
+      setUseLocationError("Geolocation is not supported in this browser.");
+      return;
+    }
+    setUseLocationError(null);
+    setUseLocationBusy(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+          const r = await fetch(`/api/settings/reverse-geocode?lat=${lat}&lng=${lng}`);
+          const j = (await r.json()) as { error?: string; locationText?: string };
+          if (!r.ok || !j.locationText) {
+            throw new Error(j.error || "Could not resolve your location");
+          }
+          setLocDraft(j.locationText);
+        } catch (e) {
+          setUseLocationError(e instanceof Error ? e.message : "Could not resolve your location");
+        } finally {
+          setUseLocationBusy(false);
+        }
+      },
+      () => {
+        setUseLocationError("Could not get your location. Check browser location permissions.");
+        setUseLocationBusy(false);
+      },
+      { enableHighAccuracy: true, timeout: 10000 },
+    );
+  };
+
   const runPlaces = async (mode: "category" | "name") => {
     try {
       setRunBusy(true);
@@ -367,6 +423,8 @@ export function MarketingDashboard({ showSetupPopup }: { showSetupPopup?: boolea
           mode,
           categoryName: mode === "category" ? selectedCategoryName : undefined,
           nameQuery: nameQuery.trim() || undefined,
+          locationAddress: locDraft.trim() || undefined,
+          radiusMiles: radiusDraft,
           websiteFilter: filterDraft,
         }),
       });
@@ -421,33 +479,41 @@ export function MarketingDashboard({ showSetupPopup }: { showSetupPopup?: boolea
   };
 
   const addTemplate = async () => {
-    const name = window.prompt("New template name");
-    if (!name?.trim()) return;
+    const name = newTemplateName.trim();
+    if (!name) return;
     try {
+      setNewTemplateBusy(true);
       await apiJson("/api/templates", {
         method: "POST",
         body: JSON.stringify({
-          name: name.trim(),
+          name,
           subject: "New outreach",
           body: "Hi {{businessName}},\n\n{{myName}}",
         }),
       });
+      setNewTemplateName("");
+      setNewTemplateModalOpen(false);
       setTplDirty(false);
       await refresh({ forceTemplateSync: true });
     } catch (e) {
       window.alert(e instanceof Error ? e.message : "Failed");
+    } finally {
+      setNewTemplateBusy(false);
     }
   };
 
   const deleteTemplate = async () => {
     if (!selectedTplId) return;
-    if (!window.confirm("Delete this template? Leads using it will be reassigned.")) return;
     try {
+      setDeleteTemplateBusy(true);
       await apiJson(`/api/templates/${selectedTplId}`, { method: "DELETE" });
+      setDeleteTemplateModalOpen(false);
       setTplDirty(false);
       await refresh({ forceTemplateSync: true });
     } catch (e) {
       window.alert(e instanceof Error ? e.message : "Failed");
+    } finally {
+      setDeleteTemplateBusy(false);
     }
   };
 
@@ -507,8 +573,22 @@ export function MarketingDashboard({ showSetupPopup }: { showSetupPopup?: boolea
   };
 
   const onDeleteLead = async (leadId: string) => {
-    await apiJson(`/api/leads/${leadId}`, { method: "DELETE" });
-    await refresh();
+    const lead = leads.find((x) => x._id === leadId);
+    setLeadDeleteTarget({ id: leadId, name: lead?.businessName || "this lead" });
+  };
+
+  const confirmDeleteLead = async () => {
+    if (!leadDeleteTarget) return;
+    try {
+      setDeleteLeadBusy(true);
+      await apiJson(`/api/leads/${leadDeleteTarget.id}`, { method: "DELETE" });
+      setLeadDeleteTarget(null);
+      await refresh();
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Failed");
+    } finally {
+      setDeleteLeadBusy(false);
+    }
   };
 
   const confirmDeleteAllLeads = async () => {
@@ -657,6 +737,178 @@ export function MarketingDashboard({ showSetupPopup }: { showSetupPopup?: boolea
         </div>
       ) : null}
 
+      {deleteTemplateModalOpen ? (
+        <div className="fixed inset-0 z-[105] flex items-end justify-center p-4 sm:items-center">
+          <button
+            type="button"
+            disabled={deleteTemplateBusy}
+            className="absolute inset-0 bg-black/60 backdrop-blur-[3px]"
+            aria-label="Close dialog"
+            onClick={() => {
+              if (!deleteTemplateBusy) setDeleteTemplateModalOpen(false);
+            }}
+          />
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="delete-template-title"
+            aria-describedby="delete-template-desc"
+            className="relative z-10 w-full max-w-md overflow-hidden rounded-2xl border border-lux-crimson/35 bg-lux-panel/98 shadow-[0_28px_80px_-24px_rgba(0,0,0,0.75),0_0_0_1px_rgba(159,27,61,0.15)] ring-1 ring-lux-crimson/20"
+          >
+            <div className="h-1 w-full bg-gradient-to-r from-lux-crimson/40 via-lux-crimson to-lux-crimson/45" aria-hidden />
+            <div className="px-6 pb-5 pt-5 sm:px-8 sm:pt-6">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-lux-crimson">Danger zone</p>
+              <h2 id="delete-template-title" className="mt-2 font-serif text-xl font-semibold tracking-tight text-lux-fg">
+                Delete template?
+              </h2>
+              <p id="delete-template-desc" className="mt-3 text-sm leading-relaxed text-lux-muted">
+                This will delete <span className="font-medium text-lux-fg">{tplName || "the selected template"}</span>.
+                Leads using it will be reassigned to another template.
+              </p>
+              <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-3">
+                <button
+                  type="button"
+                  disabled={deleteTemplateBusy}
+                  onClick={() => setDeleteTemplateModalOpen(false)}
+                  className="rounded-sm border border-lux-line bg-lux-canvas px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-lux-muted transition hover:border-lux-gold/35 hover:text-lux-fg disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={deleteTemplateBusy}
+                  onClick={() => void deleteTemplate()}
+                  className="rounded-sm border border-lux-crimson/55 bg-lux-crimson px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-white shadow-[0_8px_28px_-8px_rgba(159,27,61,0.55)] transition hover:bg-lux-crimson/90 disabled:opacity-50"
+                >
+                  {deleteTemplateBusy ? "Deleting…" : "Delete template"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {leadDeleteTarget ? (
+        <div className="fixed inset-0 z-[106] flex items-end justify-center p-4 sm:items-center">
+          <button
+            type="button"
+            disabled={deleteLeadBusy}
+            className="absolute inset-0 bg-black/60 backdrop-blur-[3px]"
+            aria-label="Close dialog"
+            onClick={() => {
+              if (!deleteLeadBusy) setLeadDeleteTarget(null);
+            }}
+          />
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="delete-lead-title"
+            aria-describedby="delete-lead-desc"
+            className="relative z-10 w-full max-w-md overflow-hidden rounded-2xl border border-lux-crimson/35 bg-lux-panel/98 shadow-[0_28px_80px_-24px_rgba(0,0,0,0.75),0_0_0_1px_rgba(159,27,61,0.15)] ring-1 ring-lux-crimson/20"
+          >
+            <div className="h-1 w-full bg-gradient-to-r from-lux-crimson/40 via-lux-crimson to-lux-crimson/45" aria-hidden />
+            <div className="px-6 pb-5 pt-5 sm:px-8 sm:pt-6">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-lux-crimson">Danger zone</p>
+              <h2 id="delete-lead-title" className="mt-2 font-serif text-xl font-semibold tracking-tight text-lux-fg">
+                Delete lead?
+              </h2>
+              <p id="delete-lead-desc" className="mt-3 text-sm leading-relaxed text-lux-muted">
+                Remove <span className="font-medium text-lux-fg">{leadDeleteTarget.name}</span> from your leads list.
+                This cannot be undone.
+              </p>
+              <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-3">
+                <button
+                  type="button"
+                  disabled={deleteLeadBusy}
+                  onClick={() => setLeadDeleteTarget(null)}
+                  className="rounded-sm border border-lux-line bg-lux-canvas px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-lux-muted transition hover:border-lux-gold/35 hover:text-lux-fg disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={deleteLeadBusy}
+                  onClick={() => void confirmDeleteLead()}
+                  className="rounded-sm border border-lux-crimson/55 bg-lux-crimson px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-white shadow-[0_8px_28px_-8px_rgba(159,27,61,0.55)] transition hover:bg-lux-crimson/90 disabled:opacity-50"
+                >
+                  {deleteLeadBusy ? "Deleting…" : "Delete lead"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {newTemplateModalOpen ? (
+        <div className="fixed inset-0 z-[110] flex items-end justify-center p-4 sm:items-center">
+          <button
+            type="button"
+            disabled={newTemplateBusy}
+            className="absolute inset-0 bg-black/60 backdrop-blur-[3px]"
+            aria-label="Close dialog"
+            onClick={() => {
+              if (!newTemplateBusy) {
+                setNewTemplateModalOpen(false);
+                setNewTemplateName("");
+              }
+            }}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="new-template-title"
+            className="relative z-10 w-full max-w-md overflow-hidden rounded-2xl border border-lux-line bg-lux-panel/98 shadow-[0_28px_80px_-24px_rgba(0,0,0,0.75),0_0_0_1px_rgba(201,162,39,0.12)] ring-1 ring-[color:var(--color-lux-gold-line)]/20"
+          >
+            <div className="h-1 w-full bg-gradient-to-r from-lux-gold/30 via-lux-gold to-lux-gold/40" aria-hidden />
+            <div className="px-6 pb-5 pt-5 sm:px-8 sm:pt-6">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-lux-gold-bright">Templates</p>
+              <h2 id="new-template-title" className="mt-2 font-serif text-xl font-semibold tracking-tight text-lux-fg">
+                Create new template
+              </h2>
+              <label className="mt-4 block space-y-2">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-lux-gold-muted">
+                  Template name
+                </span>
+                <input
+                  autoFocus
+                  value={newTemplateName}
+                  onChange={(e) => setNewTemplateName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void addTemplate();
+                    }
+                  }}
+                  placeholder="e.g. Florist Follow-up"
+                  className="w-full rounded-sm border border-lux-line bg-lux-field px-3 py-2 text-sm outline-none focus:border-lux-gold"
+                />
+              </label>
+              <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-3">
+                <button
+                  type="button"
+                  disabled={newTemplateBusy}
+                  onClick={() => {
+                    setNewTemplateModalOpen(false);
+                    setNewTemplateName("");
+                  }}
+                  className="rounded-sm border border-lux-line bg-lux-canvas px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-lux-muted transition hover:border-lux-gold/35 hover:text-lux-fg disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={newTemplateBusy || !newTemplateName.trim()}
+                  onClick={() => void addTemplate()}
+                  className="rounded-sm bg-lux-primary px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-lux-primary-fg transition hover:bg-lux-primary-hover disabled:opacity-50"
+                >
+                  {newTemplateBusy ? "Creating…" : "Create template"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {runSuccess ? (
         <div
           className="fixed bottom-6 left-1/2 z-50 w-[min(24rem,calc(100%-2rem))] -translate-x-1/2 sm:left-auto sm:right-8 sm:translate-x-0"
@@ -720,41 +972,48 @@ export function MarketingDashboard({ showSetupPopup }: { showSetupPopup?: boolea
                 Precision outreach intelligence — composed like briefings, built for outcomes.
               </p>
             </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <nav
-                className="flex rounded-sm border border-lux-line bg-lux-panel/90 p-1 shadow-[0_1px_0_var(--color-lux-rim)_inset,0_12px_40px_-12px_rgba(0,0,0,0.45)] backdrop-blur-md"
-                aria-label="Dashboard sections"
-              >
-                {tabs.map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => setTab(t.id)}
-                    className={`rounded-sm px-4 py-2 text-xs font-semibold uppercase tracking-wider transition sm:px-5 ${
-                      tab === t.id
-                        ? "bg-gradient-to-b from-lux-primary to-[#8a721f] text-lux-primary-fg shadow-[0_4px_20px_-4px_rgba(201,162,39,0.4)]"
-                        : "text-lux-muted hover:bg-lux-gold-soft/50 hover:text-lux-fg"
-                    }`}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </nav>
-              <button
-                type="button"
-                disabled={runBusy}
-                onClick={() => void runPlaces("category")}
-                className="rounded-sm border border-[color:var(--color-lux-gold-line)] bg-lux-panel px-6 py-2.5 text-xs font-semibold uppercase tracking-[0.2em] text-lux-gold-bright shadow-[0_0_0_1px_rgba(201,162,39,0.12),0_12px_36px_-10px_rgba(0,0,0,0.5)] transition hover:bg-lux-gold-soft/30 hover:text-lux-fg disabled:opacity-40"
-              >
-                Run Bot
-              </button>
-              <button
-                type="button"
-                onClick={() => void logout()}
-                className="rounded-sm border border-lux-line bg-lux-canvas px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-lux-muted transition hover:border-lux-crimson/35 hover:text-lux-crimson"
-              >
-                Log out
-              </button>
+            <div className="flex w-full max-w-3xl flex-col items-stretch gap-2 sm:w-auto sm:items-end">
+              <div className="flex items-center justify-between gap-3 rounded-sm border border-lux-line bg-lux-panel/80 px-3 py-1.5 text-[11px] text-lux-muted sm:justify-end">
+                <span>
+                  Logged in as <span className="font-mono text-lux-gold-bright">{currentUsername ?? "user"}</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void logout()}
+                  className="rounded-sm border border-lux-line bg-lux-canvas px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-lux-muted transition hover:border-lux-crimson/35 hover:text-lux-crimson"
+                >
+                  Log out
+                </button>
+              </div>
+              <div className="flex flex-wrap items-center gap-3 sm:flex-nowrap sm:justify-end">
+                <nav
+                  className="flex rounded-sm border border-lux-line bg-lux-panel/90 p-1 shadow-[0_1px_0_var(--color-lux-rim)_inset,0_12px_40px_-12px_rgba(0,0,0,0.45)] backdrop-blur-md"
+                  aria-label="Dashboard sections"
+                >
+                  {tabs.map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setTab(t.id)}
+                      className={`rounded-sm px-4 py-2 text-xs font-semibold uppercase tracking-wider transition sm:px-5 ${
+                        tab === t.id
+                          ? "bg-gradient-to-b from-lux-primary to-[#8a721f] text-lux-primary-fg shadow-[0_4px_20px_-4px_rgba(201,162,39,0.4)]"
+                          : "text-lux-muted hover:bg-lux-gold-soft/50 hover:text-lux-fg"
+                      }`}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </nav>
+                <button
+                  type="button"
+                  disabled={runBusy}
+                  onClick={() => void runPlaces("category")}
+                  className="rounded-sm border border-[color:var(--color-lux-gold-line)] bg-lux-panel px-6 py-2.5 text-xs font-semibold uppercase tracking-[0.2em] text-lux-gold-bright shadow-[0_0_0_1px_rgba(201,162,39,0.12),0_12px_36px_-10px_rgba(0,0,0,0.5)] transition hover:bg-lux-gold-soft/30 hover:text-lux-fg disabled:opacity-40"
+                >
+                  Run Bot
+                </button>
+              </div>
             </div>
           </div>
         </header>
@@ -820,14 +1079,29 @@ export function MarketingDashboard({ showSetupPopup }: { showSetupPopup?: boolea
                   />
                 </label>
                 <label className="block space-y-2 sm:col-span-2">
-                  <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-lux-teal">
-                    Location (geocoded)
+                  <span className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-lux-teal">
+                      Location (geocoded)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void useMyLocation()}
+                      disabled={useLocationBusy}
+                      className="rounded-sm border border-lux-line bg-lux-canvas px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-lux-muted transition hover:border-lux-teal/40 hover:text-lux-link disabled:opacity-40"
+                    >
+                      {useLocationBusy ? "Locating…" : "Use my location"}
+                    </button>
                   </span>
                   <input
                     value={locDraft}
                     onChange={(e) => setLocDraft(e.target.value)}
+                    placeholder="ZIP preferred (city/state or full address also works)"
                     className="w-full rounded-sm border border-lux-line bg-lux-field px-3 py-3 font-mono text-xs text-lux-fg-dim outline-none transition focus:border-lux-gold focus:ring-1 focus:ring-lux-gold-soft"
                   />
+                  <p className="text-[10px] text-lux-subtle">
+                    Recommended: use ZIP code for best local targeting. City/address is also accepted.
+                  </p>
+                  {useLocationError ? <p className="text-[10px] text-lux-crimson">{useLocationError}</p> : null}
                 </label>
                 <label className="block space-y-2">
                   <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-lux-gold-bright">
@@ -1031,14 +1305,14 @@ export function MarketingDashboard({ showSetupPopup }: { showSetupPopup?: boolea
               <div className="mt-4 flex flex-col gap-2">
                 <button
                   type="button"
-                  onClick={() => void addTemplate()}
+                  onClick={() => setNewTemplateModalOpen(true)}
                   className="rounded-sm border border-lux-line bg-lux-canvas px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-lux-muted hover:border-lux-gold/40"
                 >
                   New template
                 </button>
                 <button
                   type="button"
-                  onClick={() => void deleteTemplate()}
+                  onClick={() => setDeleteTemplateModalOpen(true)}
                   className="rounded-sm border border-lux-crimson/40 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-lux-crimson hover:bg-lux-crimson-soft"
                 >
                   Delete selected
@@ -1052,9 +1326,6 @@ export function MarketingDashboard({ showSetupPopup }: { showSetupPopup?: boolea
                       onClick={() => {
                         setTplDirty(false);
                         setSelectedTplId(tpl._id);
-                        setTplName(tpl.name);
-                        setTplSubject(tpl.subject);
-                        setTplBody(tpl.body);
                       }}
                       className={`flex w-full flex-col rounded-sm border px-4 py-3.5 text-left transition ${
                         selectedTplId === tpl._id

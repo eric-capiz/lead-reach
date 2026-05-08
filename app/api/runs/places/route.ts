@@ -17,17 +17,34 @@ export async function POST(req: Request) {
       mode?: "category" | "name";
       categoryName?: string;
       nameQuery?: string;
+      locationAddress?: string;
+      radiusMiles?: number;
       websiteFilter?: "no_website" | "any" | "has_website";
     };
 
     const settings = await AppSettingsModel.findOne({ userId });
     if (!settings) return NextResponse.json({ error: "No settings" }, { status: 500 });
 
+    const locationAddress = body.locationAddress?.trim() || settings.locationAddress;
+    if (!locationAddress?.trim()) {
+      return NextResponse.json({ error: "locationAddress required" }, { status: 400 });
+    }
+    const radiusMiles =
+      typeof body.radiusMiles === "number" && body.radiusMiles > 0 && body.radiusMiles <= 200
+        ? body.radiusMiles
+        : settings.radiusMiles;
     const websiteFilter = body.websiteFilter ?? settings.websiteFilter ?? "no_website";
-    const center = await geocodeAddress(settings.locationAddress, apiKey);
+
+    // Keep "last used" run inputs as current settings.
+    settings.locationAddress = locationAddress;
+    settings.radiusMiles = radiusMiles;
+    settings.websiteFilter = websiteFilter;
+    await settings.save();
+
+    const center = await geocodeAddress(locationAddress, apiKey);
 
     const mode = body.mode === "name" ? "name" : "category";
-    const loc = settings.locationAddress.trim();
+    const loc = locationAddress.trim();
     let textQuery: string;
     if (mode === "category") {
       const cat = body.categoryName?.trim() || "";
@@ -46,7 +63,7 @@ export async function POST(req: Request) {
       apiKey,
       textQuery,
       center,
-      radiusMiles: settings.radiusMiles,
+      radiusMiles,
       pageSize: 20,
     });
 

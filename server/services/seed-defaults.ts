@@ -10,7 +10,6 @@ import {
 import { syncOwnerMergeFieldsAndCleanup } from "@/server/services/sync-owner-merge-fields";
 import bcrypt from "bcryptjs";
 import mongoose from "mongoose";
-import { migrateLegacyUniqueIndexesToUserOwned } from "@/server/services/migrate-legacy-unique-indexes";
 
 const DEFAULT_CATEGORIES = [
   "Barbers",
@@ -22,11 +21,11 @@ const DEFAULT_CATEGORIES = [
 ];
 
 const DEFAULT_MERGE_FIELDS = [
-  { key: "myname", label: "Your name", value: "Eric Capiz" },
-  { key: "phone", label: "Phone", value: "443-307-3937" },
-  { key: "email", label: "Email", value: "ericcapiz@gmail.com" },
-  { key: "portfoliolink", label: "Portfolio URL", value: "https://ericcapiz.com" },
-  { key: "linkedinlink", label: "LinkedIn URL", value: "https://linkedin.com/in/eric-capiz" },
+  { key: "myname", label: "Your name", value: "" },
+  { key: "phone", label: "Phone", value: "" },
+  { key: "email", label: "Email", value: "" },
+  { key: "portfoliolink", label: "Portfolio URL", value: "" },
+  { key: "linkedinlink", label: "LinkedIn URL", value: "" },
 ];
 
 const DEFAULT_TEMPLATES: { name: string; subject: string; body: string; categoryTag: string; order: number }[] = [
@@ -86,9 +85,11 @@ I'm {{myName}}. Florists thrive when seasonal galleries read effortlessly.
 
 let ensureSeededInFlight: Promise<void> | null = null;
 
-export async function ensureUserSeeded(userId: mongoose.Types.ObjectId | string): Promise<void> {
+export async function ensureUserSeeded(
+  userId: mongoose.Types.ObjectId | string,
+  options?: { applyOwnerProfile?: boolean },
+): Promise<void> {
   await connectDB();
-  await migrateLegacyUniqueIndexesToUserOwned();
 
   // Settings
   if ((await AppSettingsModel.countDocuments({ userId })) === 0) {
@@ -112,7 +113,9 @@ export async function ensureUserSeeded(userId: mongoose.Types.ObjectId | string)
     await MergeFieldModel.insertMany(DEFAULT_MERGE_FIELDS.map((f) => ({ ...f, userId })));
   }
 
-  await syncOwnerMergeFieldsAndCleanup(userId);
+  if (options?.applyOwnerProfile) {
+    await syncOwnerMergeFieldsAndCleanup(userId);
+  }
 
   // Templates
   if ((await TemplateModel.countDocuments({ userId })) === 0) {
@@ -134,7 +137,7 @@ async function runEnsureSeeded(): Promise<void> {
     breezy?._id ??
     (await UserModel.create({ usernameLower, passwordHash: bcrypt.hashSync("breezy", 10) }))._id;
 
-  await ensureUserSeeded(breezyId);
+  await ensureUserSeeded(breezyId, { applyOwnerProfile: true });
 }
 
 /** One completed run per server process; concurrent calls share the same work. */

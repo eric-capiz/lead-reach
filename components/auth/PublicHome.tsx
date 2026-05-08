@@ -102,7 +102,13 @@ export function PublicHome() {
             </button>
           </div>
 
-          <div className="space-y-3">
+          <form
+            className="space-y-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void submit();
+            }}
+          >
             <label className="block space-y-1">
               <span className="text-[10px] font-semibold uppercase tracking-wider text-lux-gold-muted">
                 Username
@@ -144,7 +150,7 @@ export function PublicHome() {
             ) : null}
 
             <button
-              type="button"
+              type="submit"
               onClick={() => void submit()}
               disabled={busy}
               className="w-full rounded-sm bg-lux-primary px-5 py-3 text-xs font-semibold uppercase tracking-wider text-lux-primary-fg shadow-[0_8px_28px_-8px_rgba(201,162,39,0.35)] transition hover:bg-lux-primary-hover disabled:opacity-40"
@@ -152,7 +158,7 @@ export function PublicHome() {
               {busy ? "Working…" : mode === "login" ? "Login" : "Create account"}
             </button>
 
-          </div>
+          </form>
         </div>
       </div>
     </div>

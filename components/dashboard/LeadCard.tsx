@@ -209,7 +209,6 @@ export function LeadCard({
           type="button"
           disabled={busy}
           onClick={() => {
-            if (!window.confirm("Delete this lead?")) return;
             setBusy(true);
             void onDelete(row._id).finally(() => setBusy(false));
           }}

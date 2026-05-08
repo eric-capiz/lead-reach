@@ -13,5 +13,5 @@ export default async function Home({
   const reg = sp.registered;
   const fromRegistration = reg === "1" || (Array.isArray(reg) && reg.includes("1"));
   const showSetupPopup = fromRegistration && !user.setupCompleted;
-  return <MarketingDashboard showSetupPopup={showSetupPopup} />;
+  return <MarketingDashboard showSetupPopup={showSetupPopup} currentUsername={user.usernameLower} />;
 }

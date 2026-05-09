@@ -142,11 +142,7 @@ npm run build
 
 ## TODO
 
-1. Social scraping
-2. Decide outreach send flow:
- - keep copy and paste + manual sending, or
- - let the bot send messages directly
-3. Safeguard Google API usage/pricing before deployment:
- - confirm current free tier/quotas (estimated ~10,000/month)
- - enforce limits/alerts
-4. Deploy to Vercel
+1. ~~Social scraping~~ — shipped (Yahoo SERP + optional Playwright fallback; per-place cache; batch “Get socials” by leads page size).
+2. **Outreach send flow** (not built yet) — decide and implement: keep copy/paste + manual sending, and/or let the app send messages (e.g. email provider integration).
+3. ~~Google API safeguards~~ — done (quotas/limits and pre-deploy usage checks in place).
+4. **Deploy to Vercel** — in progress.

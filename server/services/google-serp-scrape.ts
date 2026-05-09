@@ -84,12 +84,38 @@ function looseFacebookOk(url: string): boolean {
   }
 }
 
+/**
+ * Accept only profile URLs `instagram.com/<handle>` (one segment).
+ * Rejects posts/reels/explore/popular hubs and Meta-owned handles like `/instagram` (official app account).
+ */
 function looseInstagramOk(url: string): boolean {
   try {
     const u = new URL(url);
     const h = u.hostname.replace(/^www\./i, "").toLowerCase();
     if (h !== "instagram.com" && !h.endsWith(".instagram.com")) return false;
-    return u.pathname.replace(/\/$/, "").length > 1;
+    const parts = u.pathname.replace(/\/$/, "").split("/").filter(Boolean);
+    if (parts.length !== 1) return false;
+    const handle = parts[0]!.toLowerCase();
+    if (handle.length < 2) return false;
+    const RESERVED = new Set([
+      "instagram",
+      "creators",
+      "about",
+      "explore",
+      "accounts",
+      "legal",
+      "help",
+      "press",
+      "popular",
+      "reel",
+      "reels",
+      "p",
+      "tv",
+      "stories",
+      "direct",
+      "developer",
+    ]);
+    return !RESERVED.has(handle);
   } catch {
     return false;
   }

@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "db:test": "node --env-file=.env.local scripts/test-mongodb.mjs",
-    "postinstall": "npx playwright install chromium"
+    "postinstall": "node scripts/playwright-postinstall.cjs"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

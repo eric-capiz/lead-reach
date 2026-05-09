@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { APP_NAME } from "@/lib/constants";
+import { LEADS_PAGE_SIZE } from "@/lib/leads-page";
 import type { LeadStatus, WebsiteFilter } from "@/lib/constants";
 import { applyMergeTemplate, buildMergeMap } from "@/lib/merge";
 import { LeadCard } from "./LeadCard";
@@ -58,6 +59,11 @@ type SocialSearchApiResponse = {
   network?: string;
   skipped?: boolean;
   skipReason?: string;
+  batch?: boolean;
+  processed?: number;
+  updatedCount?: number;
+  pageSize?: number;
+  results?: unknown[];
   businessName?: string;
   facebook?: string | null;
   instagram?: string | null;
@@ -74,6 +80,14 @@ type SocialSearchApiResponse = {
     instagram: { query: string | null; winningQuery: string | null; urls: string[] };
   };
 };
+
+/** Same rules as server `leadNeedsSocialEnrichment` — which rows on this page can still get socials. */
+function pageLeadNeedsSocialEnrichment(lead: LeadApi): boolean {
+  const hasFb = typeof lead.facebook === "string" && lead.facebook.trim().length > 0;
+  const hasIg = typeof lead.instagram === "string" && lead.instagram.trim().length > 0;
+  if (hasFb && hasIg) return false;
+  return `${lead.businessName ?? ""} ${lead.location ?? ""}`.trim().length > 0;
+}
 
 type SocialProgressState = {
   batchDone: number;
@@ -291,7 +305,7 @@ export function MarketingDashboard({
   }, [deleteAllModalOpen, deleteAllBusy]);
 
   const fetchLeadsPage = useCallback(async (page: number, search: string, sort: "new" | "old") => {
-    const q = new URLSearchParams({ page: String(page), limit: "20", sort });
+    const q = new URLSearchParams({ page: String(page), limit: String(LEADS_PAGE_SIZE), sort });
     if (search) q.set("search", search);
     return apiJson<LeadsApiResponse>(`/api/leads?${q}`);
   }, []);
@@ -515,24 +529,53 @@ export function MarketingDashboard({
     runSocialScrape("both");
   };
 
-  /** One POST = one lead (newest eligible missing FB and/or IG), same as pre-batch behavior. */
+  /** POST sends **current page** lead ids that still need FB/IG (same count as pagination limit). */
   const runSocialScrape = (network: "facebook" | "instagram" | "both") => {
     void (async () => {
       try {
         setSocialsBusy(true);
+        const ids = leads.filter(pageLeadNeedsSocialEnrichment).map((l) => l._id);
         setSocialProgress({
           batchDone: 0,
-          totalBatches: 1,
+          totalBatches: Math.max(1, ids.length),
           checkedSoFar: 0,
           updatedSoFar: 0,
         });
 
+        if (ids.length === 0) {
+          showSocialSuccess({
+            processedLeads: 0,
+            updatedLeads: 0,
+            scrapeNote:
+              "No leads on this page need Facebook or Instagram. Try another page, or add a name/location on the lead.",
+          });
+          return;
+        }
+
         const res = await apiJson<SocialSearchApiResponse>("/api/runs/social-search", {
           method: "POST",
-          body: JSON.stringify({ network }),
+          body: JSON.stringify({ network, leadIds: ids }),
         });
 
-        // API route logs go to the server terminal; this runs in the browser so you can read it in DevTools.
+        if (res.batch) {
+          if (Array.isArray(res.results)) {
+            console.log("[get-socials] batch", res.processed, "updated", res.updatedCount, res.results);
+          }
+          setSocialProgress({
+            batchDone: res.processed ?? ids.length,
+            totalBatches: res.processed ?? ids.length,
+            checkedSoFar: res.processed ?? ids.length,
+            updatedSoFar: res.updatedCount ?? 0,
+          });
+          await refresh();
+          showSocialSuccess({
+            processedLeads: res.processed ?? ids.length,
+            updatedLeads: res.updatedCount ?? 0,
+            scrapeNote: res.note,
+          });
+          return;
+        }
+
         if (res.urlsFromSearchResults) {
           console.log("[get-socials] urls-from-results", res.urlsFromSearchResults);
         }
@@ -1249,7 +1292,7 @@ export function MarketingDashboard({
                       ? "All leads already have both social links, or none have a name or location to search"
                       : loading
                         ? "Loading workspace…"
-                        : `Enrich one lead per click (newest that still needs FB or IG). ${stats.leadsNeedingSocials} eligible — repeat to continue.`
+                        : `Enrich leads on the current Leads table page (up to ${LEADS_PAGE_SIZE}). Uses cache when a Google place was resolved before; searches Yahoo only for missing links. Go to the next page and click again for more rows.`
                   }
                 >
                   {socialsBusy ? "Working…" : "Get socials"}
@@ -1444,7 +1487,11 @@ export function MarketingDashboard({
               <div>
                 <h2 className="font-serif text-2xl font-semibold text-lux-fg">Leads</h2>
                 <p className="text-xs text-lux-muted">
-                  20 per page · newest first · leads come from your Places bot runs
+                  {LEADS_PAGE_SIZE} per page · newest first · leads come from your Places bot runs ·{" "}
+                  <span className="text-lux-fg-dim">
+                    Get socials fills FB/IG for every row on <strong>this page</strong> that still needs them (cache
+                    first), then run again after Next page.
+                  </span>
                 </p>
               </div>
               <button
@@ -1499,7 +1546,7 @@ export function MarketingDashboard({
             <p className="mt-3 text-[10px] uppercase tracking-wider text-lux-subtle">
               {leadsTotal === 0
                 ? "No leads match this filter."
-                : `Showing ${(leadsPage - 1) * 20 + 1}–${Math.min(leadsPage * 20, leadsTotal)} of ${leadsTotal} · page ${leadsPage} / ${leadsTotalPages}`}
+                : `Showing ${(leadsPage - 1) * LEADS_PAGE_SIZE + 1}–${Math.min(leadsPage * LEADS_PAGE_SIZE, leadsTotal)} of ${leadsTotal} · page ${leadsPage} / ${leadsTotalPages}`}
             </p>
             <div className="mt-6 flex flex-wrap gap-2">
               <button

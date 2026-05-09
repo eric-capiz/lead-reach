@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { TemplateModel } from "@/server/db/models";
 import { requireCurrentUserId } from "@/server/auth/session";
+import { connectDB } from "@/server/db/connect";
 
 export async function GET() {
   try {
+    await connectDB();
     const userId = await requireCurrentUserId();
     const items = await TemplateModel.find({ userId }).sort({ order: 1, name: 1 }).lean();
     return NextResponse.json({ items });
@@ -15,6 +17,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
+    await connectDB();
     const userId = await requireCurrentUserId();
     const body = (await req.json()) as {
       name?: string;

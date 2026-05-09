@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { LeadModel } from "@/server/db/models";
 import { escapeRegex } from "@/lib/escape-regex";
 import { requireCurrentUserId } from "@/server/auth/session";
+import { connectDB } from "@/server/db/connect";
 
 export async function GET(req: NextRequest) {
   try {
+    await connectDB();
     const userId = await requireCurrentUserId();
     const { searchParams } = req.nextUrl;
     const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1);
@@ -55,6 +57,7 @@ export async function GET(req: NextRequest) {
 
 export async function DELETE() {
   try {
+    await connectDB();
     const userId = await requireCurrentUserId();
     const result = await LeadModel.deleteMany({ userId });
     return NextResponse.json({

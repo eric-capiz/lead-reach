@@ -2,11 +2,13 @@ import { NextResponse } from "next/server";
 import mongoose from "mongoose";
 import { MergeFieldModel } from "@/server/db/models";
 import { requireCurrentUserId } from "@/server/auth/session";
+import { connectDB } from "@/server/db/connect";
 
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function PATCH(req: Request, ctx: Ctx) {
   try {
+    await connectDB();
     const userId = await requireCurrentUserId();
     const { id } = await ctx.params;
     if (!mongoose.isValidObjectId(id)) {
@@ -28,6 +30,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
 
 export async function DELETE(_req: Request, ctx: Ctx) {
   try {
+    await connectDB();
     const userId = await requireCurrentUserId();
     const { id } = await ctx.params;
     if (!mongoose.isValidObjectId(id)) {

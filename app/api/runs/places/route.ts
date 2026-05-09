@@ -3,9 +3,11 @@ import { AppSettingsModel, LeadModel, TemplateModel } from "@/server/db/models";
 import { filterByWebsitePreference, geocodeAddress, searchPlacesText } from "@/server/services/places";
 import { requireCurrentUserId } from "@/server/auth/session";
 import { getGoogleApiKey } from "@/server/lib/google-api-key";
+import { connectDB } from "@/server/db/connect";
 
 export async function POST(req: Request) {
   try {
+    await connectDB();
     const userId = await requireCurrentUserId();
     const apiKey = getGoogleApiKey();
     if (!apiKey) {

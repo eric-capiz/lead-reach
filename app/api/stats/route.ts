@@ -2,9 +2,11 @@ import { NextResponse } from "next/server";
 import { LeadModel } from "@/server/db/models";
 import { requireCurrentUserId } from "@/server/auth/session";
 import { leadNeedsSocialEnrichment } from "@/server/lib/lead-socials";
+import { connectDB } from "@/server/db/connect";
 
 export async function GET() {
   try {
+    await connectDB();
     const userId = await requireCurrentUserId();
     const [total, noWebsite, emailsFound, socialMatches, messagesSent, leadSocialSlice] = await Promise.all([
       LeadModel.countDocuments({ userId, isSample: { $ne: true } }),

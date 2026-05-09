@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { AppSettingsModel } from "@/server/db/models";
 import { requireCurrentUserId } from "@/server/auth/session";
+import { connectDB } from "@/server/db/connect";
 
 export async function GET() {
   try {
+    await connectDB();
     const userId = await requireCurrentUserId();
     const doc = await AppSettingsModel.findOne({ userId }).lean();
     return NextResponse.json({ settings: doc });
@@ -15,6 +17,7 @@ export async function GET() {
 
 export async function PATCH(req: Request) {
   try {
+    await connectDB();
     const userId = await requireCurrentUserId();
     const body = (await req.json()) as {
       locationAddress?: string;

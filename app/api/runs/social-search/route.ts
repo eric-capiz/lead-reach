@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import mongoose from "mongoose";
 import { LeadModel, SocialResolveCacheModel } from "@/server/db/models";
 import { requireCurrentUserId } from "@/server/auth/session";
+import { connectDB } from "@/server/db/connect";
 import {
   fetchSocialCandidatesForQuery,
   pickBestSocialCandidate,
@@ -297,6 +298,7 @@ async function enrichSingleLead(
  */
 export async function POST(req: Request) {
   try {
+    await connectDB();
     const userId = await requireCurrentUserId();
     let network: Network = "both";
     let leadIdsBody: string[] | undefined;

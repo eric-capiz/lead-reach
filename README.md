@@ -50,6 +50,7 @@ LeadReach is designed to help a user quickly:
  - Create, edit, delete templates
  - Styled in app create/delete confirmation modals
  - Merge fields editable per user
+ - **Places runs and templates:** When you run a **category** search, each lead gets the template whose **name** matches that category (same label as in your category list; comparison ignores case and extra spaces). If nothing matches, the app uses (in order): optional **category tag** on a template, the single template marked **“Use when no category matches”** (your general / catch‑all email), or a heuristic “general” template (e.g. category tag `general`, or a name like `General outreach`). It does **not** silently pick the first template in the list for unknown categories. **Name‑only** Places runs still resolve against that default / general logic and then first‑by‑order if needed.
 
 - **Search UX**
  - Configurable location, radius, and website filter
@@ -91,7 +92,7 @@ Optional (recommended for production):
 AUTH_SECRET=
 ```
 
-If `AUTH_SECRET` is not set, the app falls back to a derived secret. For production, set an explicit strong secret.
+If `AUTH_SECRET` is not set, the app falls back to other env-derived values for signing sessions (fine for local dev only). For production (including Vercel), set an explicit strong secret.
 
 ## Local Development
 
@@ -132,6 +133,12 @@ npm run build
 - Collection data is intentionally user partitioned by `userId` rather than separate per user collections.
 - All destructive actions (template/lead delete, bulk lead delete) use in app confirmation modals.
 
+### Deployment (e.g. Vercel)
+
+- Set **Production** env vars: `MONGODB_URI`, `GOOGLE_API_KEY`, and preferably `AUTH_SECRET`.
+- **MongoDB Atlas:** allow inbound from your host’s IPs. Serverless platforms use changing egress IPs; many setups use **`0.0.0.0/0`** in Atlas Network Access and rely on strong DB credentials + secrets.
+- **Build:** Playwright’s Chromium install is skipped on Vercel (`VERCEL=1`) so installs stay fast; optional social browser fallback is off there unless you force it. After `npm install` locally, run `npx playwright install chromium` once if you use Playwright features on your machine.
+
 ## Scripts
 
 - `npm run dev` start local dev server
@@ -145,4 +152,4 @@ npm run build
 1. ~~Social scraping~~ — shipped (Yahoo SERP + optional Playwright fallback; per-place cache; batch “Get socials” by leads page size).
 2. **Outreach send flow** (not built yet) — decide and implement: keep copy/paste + manual sending, and/or let the app send messages (e.g. email provider integration).
 3. ~~Google API safeguards~~ — done (quotas/limits and pre-deploy usage checks in place).
-4. **Deploy to Vercel** — in progress.
+4. ~~**Deploy to Vercel**~~ — MVP supported (env vars + Atlas access; see Deployment above).

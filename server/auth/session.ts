@@ -86,12 +86,12 @@ export async function clearSessionCookie(): Promise<void> {
 }
 
 export async function getCurrentUser(): Promise<UserDoc | null> {
-  await connectDB();
   const cookieStore = await cookies();
   const token = cookieStore.get(COOKIE_NAME)?.value;
   if (!token) return null;
   const payload = decodeSessionToken(token);
   if (!payload) return null;
+  await connectDB();
   const user = await UserModel.findById(payload.userId).lean<UserDoc>();
   if (!user) return null;
   return user;

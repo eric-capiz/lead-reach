@@ -256,6 +256,8 @@ export function MarketingDashboard({
   const [tplName, setTplName] = useState("");
   const [tplSubject, setTplSubject] = useState("");
   const [tplBody, setTplBody] = useState("");
+  const [tplCategoryTag, setTplCategoryTag] = useState("");
+  const [tplUseWhenNoCategoryMatch, setTplUseWhenNoCategoryMatch] = useState(false);
   const [tplDirty, setTplDirty] = useState(false);
 
   const [newCategoryName, setNewCategoryName] = useState("");
@@ -357,6 +359,8 @@ export function MarketingDashboard({
         name: String(row.name),
         subject: String(row.subject ?? ""),
         body: String(row.body ?? ""),
+        categoryTag: String(row.categoryTag ?? ""),
+        useWhenNoCategoryMatch: Boolean(row.useWhenNoCategoryMatch),
       }));
       setTemplates(tItems);
       const templateLocked = tplDirty && !ignoreTplDirty;
@@ -368,11 +372,15 @@ export function MarketingDashboard({
         setTplName(row.name);
         setTplSubject(row.subject);
         setTplBody(row.body);
+        setTplCategoryTag(row.categoryTag ?? "");
+        setTplUseWhenNoCategoryMatch(Boolean(row.useWhenNoCategoryMatch));
       } else if (!tItems.length) {
         setSelectedTplId(null);
         setTplName("");
         setTplSubject("");
         setTplBody("");
+        setTplCategoryTag("");
+        setTplUseWhenNoCategoryMatch(false);
       }
       setMergeFields(m.items);
       setStats(st.stats);
@@ -426,6 +434,8 @@ export function MarketingDashboard({
     setTplName(row.name);
     setTplSubject(row.subject);
     setTplBody(row.body);
+    setTplCategoryTag(row.categoryTag ?? "");
+    setTplUseWhenNoCategoryMatch(Boolean(row.useWhenNoCategoryMatch));
   }, [selectedTplId, templates, tplDirty]);
 
   const previewMerged = useMemo(() => {
@@ -654,7 +664,13 @@ export function MarketingDashboard({
     try {
       await apiJson(`/api/templates/${selectedTplId}`, {
         method: "PATCH",
-        body: JSON.stringify({ name: tplName, subject: tplSubject, body: tplBody }),
+        body: JSON.stringify({
+          name: tplName,
+          subject: tplSubject,
+          body: tplBody,
+          categoryTag: tplCategoryTag.trim(),
+          useWhenNoCategoryMatch: tplUseWhenNoCategoryMatch,
+        }),
       });
       setTplDirty(false);
       await refresh({ forceTemplateSync: true });
@@ -1651,6 +1667,36 @@ export function MarketingDashboard({
                     }}
                     className="mt-1 w-full rounded-sm border border-lux-line bg-lux-field px-3 py-2 text-sm text-lux-fg outline-none focus:border-lux-gold"
                   />
+                </label>
+                <label className="mt-3 block text-xs text-lux-muted">
+                  Optional category tag (alias). Runs match template by{" "}
+                  <span className="text-lux-fg-dim">template name = category name</span> first. Use tag only if the
+                  name cannot match. Name or tag{" "}
+                  <span className="font-mono text-lux-fg-dim">general</span> for the default when nothing matches.
+                  <input
+                    value={tplCategoryTag}
+                    onChange={(e) => {
+                      setTplDirty(true);
+                      setTplCategoryTag(e.target.value);
+                    }}
+                    placeholder="optional alias, or general"
+                    className="mt-1 w-full rounded-sm border border-lux-line bg-lux-field px-3 py-2 text-sm text-lux-fg outline-none focus:border-lux-gold"
+                  />
+                </label>
+                <label className="mt-3 flex cursor-pointer items-start gap-3 text-xs text-lux-muted">
+                  <input
+                    type="checkbox"
+                    checked={tplUseWhenNoCategoryMatch}
+                    onChange={(e) => {
+                      setTplDirty(true);
+                      setTplUseWhenNoCategoryMatch(e.target.checked);
+                    }}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    Use this template when a Places category does not match any other template (your general / catch-all
+                    email). Only one template can have this on at a time.
+                  </span>
                 </label>
                 <label className="mt-3 block text-xs text-lux-muted">
                   Body (use {"{{myName}}"}, {"{{businessName}}"}, etc.)

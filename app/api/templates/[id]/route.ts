@@ -19,6 +19,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
       subject?: string;
       body?: string;
       categoryTag?: string;
+      useWhenNoCategoryMatch?: boolean;
       order?: number;
     };
     const patch: Record<string, unknown> = {};
@@ -27,6 +28,15 @@ export async function PATCH(req: Request, ctx: Ctx) {
     if (typeof body.body === "string") patch.body = body.body;
     if (typeof body.categoryTag === "string") patch.categoryTag = body.categoryTag;
     if (typeof body.order === "number") patch.order = body.order;
+    if (typeof body.useWhenNoCategoryMatch === "boolean") {
+      patch.useWhenNoCategoryMatch = body.useWhenNoCategoryMatch;
+      if (body.useWhenNoCategoryMatch) {
+        await TemplateModel.updateMany(
+          { userId, _id: { $ne: id } },
+          { $set: { useWhenNoCategoryMatch: false } },
+        );
+      }
+    }
     const doc = await TemplateModel.findOneAndUpdate({ _id: id, userId }, patch, { new: true }).lean();
     if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json({ item: doc });

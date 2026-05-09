@@ -1,9 +1,71 @@
+import mongoose from "mongoose";
 import { NextResponse } from "next/server";
 import { AppSettingsModel, LeadModel, TemplateModel } from "@/server/db/models";
 import { filterByWebsitePreference, geocodeAddress, searchPlacesText } from "@/server/services/places";
 import { requireCurrentUserId } from "@/server/auth/session";
 import { getGoogleApiKey } from "@/server/lib/google-api-key";
 import { connectDB } from "@/server/db/connect";
+
+/** Normalize category tags for comparison (trim, lowercase, collapse spaces). */
+function normalizeCategoryTag(s: string): string {
+  return s.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function heuristicGeneralTemplateId(
+  templates: { _id: unknown; name?: string; categoryTag?: string }[],
+): mongoose.Types.ObjectId | null {
+  const byTag = templates.find((t) => {
+    const tag = normalizeCategoryTag(String(t.categoryTag ?? ""));
+    return tag === "general" || tag === "default" || tag === "catchall";
+  });
+  if (byTag) return byTag._id as mongoose.Types.ObjectId;
+
+  const byName = templates.find((t) => {
+    const n = normalizeCategoryTag(String(t.name ?? ""));
+    return n === "general" || n.startsWith("general ");
+  });
+  return byName ? (byName._id as mongoose.Types.ObjectId) : null;
+}
+
+/**
+ * Pick template for this run:
+ * 1) Template **name** matches the category label (case insensitive)
+ * 2) Else **categoryTag** matches
+ * 3) Else template with **useWhenNoCategoryMatch** (explicit default)
+ * 4) Else heuristic "general" (tag/name)
+ * Name-only runs: then first template by order if still unset.
+ * Category runs: do **not** fall back to first template (avoids wrong vertical).
+ */
+async function resolveTemplateIdForPlacesRun(
+  userId: string,
+  categoryLabel: string,
+  mode: "category" | "name",
+): Promise<mongoose.Types.ObjectId | null> {
+  const templates = await TemplateModel.find({ userId })
+    .sort({ order: 1 })
+    .select("_id name categoryTag useWhenNoCategoryMatch")
+    .lean();
+  if (!templates.length) return null;
+
+  const fallbackFirst = templates[0]!._id as mongoose.Types.ObjectId;
+  const explicitDefault = templates.find((t) => t.useWhenNoCategoryMatch)?._id as
+    | mongoose.Types.ObjectId
+    | undefined;
+  const heuristicGeneral = heuristicGeneralTemplateId(templates);
+
+  if (mode === "name" || !normalizeCategoryTag(categoryLabel)) {
+    return explicitDefault ?? heuristicGeneral ?? fallbackFirst;
+  }
+
+  const want = normalizeCategoryTag(categoryLabel);
+  const byName = templates.find((t) => normalizeCategoryTag(String(t.name ?? "")) === want);
+  if (byName) return byName._id as mongoose.Types.ObjectId;
+
+  const byTag = templates.find((t) => normalizeCategoryTag(String(t.categoryTag ?? "")) === want);
+  if (byTag) return byTag._id as mongoose.Types.ObjectId;
+
+  return explicitDefault ?? heuristicGeneral ?? null;
+}
 
 export async function POST(req: Request) {
   try {
@@ -69,33 +131,41 @@ export async function POST(req: Request) {
     });
 
     const filtered = filterByWebsitePreference(raw, websiteFilter);
-    const defaultTpl = await TemplateModel.findOne({ userId }).sort({ order: 1 }).select("_id");
-    const defaultTemplateId = defaultTpl?._id ?? null;
 
     const saved: string[] = [];
     const categoryLabel = mode === "category" ? (body.categoryName?.trim() || "") : "";
 
+    const resolvedTemplateId = await resolveTemplateIdForPlacesRun(userId, categoryLabel, mode);
+
+    if (mode === "category" && normalizeCategoryTag(categoryLabel) && !resolvedTemplateId) {
+      return NextResponse.json(
+        {
+          error:
+            "No email template for this category. Match the category: rename a template to the same name as the category, set its optional category tag, turn on “Use when no category matches” on your general template, or name/tag a template as general.",
+        },
+        { status: 400 },
+      );
+    }
+
     for (const p of filtered) {
       const websiteUri = p.websiteUri;
       const websiteStatus = websiteUri ? "Has website" : "No website";
-      const setOnInsert: Record<string, unknown> = {};
-      if (defaultTemplateId) setOnInsert.templateId = defaultTemplateId;
+      const $set: Record<string, unknown> = {
+        userId,
+        businessName: p.businessName,
+        category: categoryLabel,
+        location: p.location,
+        phone: p.phone,
+        websiteUri,
+        websiteStatus,
+        googleMapsUrl: p.googleMapsUrl,
+        isSample: false,
+      };
+      if (resolvedTemplateId) $set.templateId = resolvedTemplateId;
+
       const doc = await LeadModel.findOneAndUpdate(
         { userId, googlePlaceId: p.googlePlaceId },
-        {
-          $set: {
-            userId,
-            businessName: p.businessName,
-            category: categoryLabel,
-            location: p.location,
-            phone: p.phone,
-            websiteUri,
-            websiteStatus,
-            googleMapsUrl: p.googleMapsUrl,
-            isSample: false,
-          },
-          $setOnInsert: setOnInsert,
-        },
+        { $set },
         { upsert: true, new: true, setDefaultsOnInsert: true },
       );
       saved.push(String(doc!._id));

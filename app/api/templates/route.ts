@@ -24,18 +24,27 @@ export async function POST(req: Request) {
       subject?: string;
       body?: string;
       categoryTag?: string;
+      useWhenNoCategoryMatch?: boolean;
       order?: number;
     };
     const name = body.name?.trim();
     if (!name) return NextResponse.json({ error: "name required" }, { status: 400 });
+    const useWhenNoCategoryMatch = Boolean(body.useWhenNoCategoryMatch);
     const doc = await TemplateModel.create({
       userId,
       name,
       subject: body.subject?.trim() ?? "",
       body: body.body ?? "",
       categoryTag: body.categoryTag?.trim() ?? "",
+      useWhenNoCategoryMatch,
       order: typeof body.order === "number" ? body.order : 0,
     });
+    if (useWhenNoCategoryMatch) {
+      await TemplateModel.updateMany(
+        { userId, _id: { $ne: doc._id } },
+        { $set: { useWhenNoCategoryMatch: false } },
+      );
+    }
     return NextResponse.json({ item: doc.toObject() }, { status: 201 });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Failed";

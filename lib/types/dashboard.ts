@@ -19,6 +19,15 @@ export type LeadApi = {
   isSample?: boolean;
 };
 
-export type TemplateLite = { _id: string; name: string; body: string; subject: string };
+export type TemplateLite = {
+  _id: string;
+  name: string;
+  body: string;
+  subject: string;
+  /** Matches Places run category name (case insensitive). Use `general` for default. */
+  categoryTag?: string;
+  /** When true, used for category runs that don't match any template name/tag. */
+  useWhenNoCategoryMatch?: boolean;
+};
 
 export type MergeFieldLite = { _id: string; key: string; label: string; value: string };

@@ -7,6 +7,8 @@ const templateSchema = new Schema(
     subject: { type: String, default: "" },
     body: { type: String, default: "" },
     categoryTag: { type: String, default: "" },
+    /** When true, Places runs use this template if no template name/tag matches the category (only one per user). */
+    useWhenNoCategoryMatch: { type: Boolean, default: false },
     order: { type: Number, default: 0 },
   },
   { timestamps: true },

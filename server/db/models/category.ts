@@ -4,6 +4,8 @@ const categorySchema = new Schema(
   {
     userId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
     name: { type: String, required: true, trim: true },
+    /** Part of the seeded baseline every user keeps. Renameable and editable, but not deletable. */
+    isDefault: { type: Boolean, default: false },
     order: { type: Number, default: 0 },
   },
   { timestamps: true },

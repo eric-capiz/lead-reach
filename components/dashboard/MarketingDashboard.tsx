@@ -11,7 +11,7 @@ import type { LeadApi, MergeFieldLite, TemplateLite } from "@/lib/types/dashboar
 
 type TabId = "overview" | "leads" | "templates";
 
-type CategoryRow = { _id: string; name: string; order: number };
+type CategoryRow = { _id: string; name: string; order: number; isDefault?: boolean };
 
 type SettingsRow = {
   _id: string;
@@ -256,6 +256,7 @@ export function MarketingDashboard({
   const [tplName, setTplName] = useState("");
   const [tplSubject, setTplSubject] = useState("");
   const [tplBody, setTplBody] = useState("");
+  const [tplDmBody, setTplDmBody] = useState("");
   const [tplCategoryTag, setTplCategoryTag] = useState("");
   const [tplUseWhenNoCategoryMatch, setTplUseWhenNoCategoryMatch] = useState(false);
   const [tplDirty, setTplDirty] = useState(false);
@@ -266,6 +267,7 @@ export function MarketingDashboard({
   const [newMergeValue, setNewMergeValue] = useState("");
   const [deleteAllModalOpen, setDeleteAllModalOpen] = useState(false);
   const [deleteAllBusy, setDeleteAllBusy] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
   const [newTemplateModalOpen, setNewTemplateModalOpen] = useState(false);
   const [newTemplateName, setNewTemplateName] = useState("");
   const [newTemplateBusy, setNewTemplateBusy] = useState(false);
@@ -330,6 +332,10 @@ export function MarketingDashboard({
       const ignoreTplDirty = options?.forceTemplateSync === true;
       const page = options?.resetLeadsPage ?? leadsPage;
 
+      // Brings older accounts up to the current baseline (default categories + templates)
+      // before anything reads them.
+      await apiJson<{ ok: boolean }>("/api/bootstrap");
+
       const [c, s, t, m, st, leadsRes] = await Promise.all([
         apiJson<{ items: CategoryRow[] }>("/api/categories"),
         apiJson<{ settings: SettingsRow | null }>("/api/settings"),
@@ -359,7 +365,10 @@ export function MarketingDashboard({
         name: String(row.name),
         subject: String(row.subject ?? ""),
         body: String(row.body ?? ""),
+        dmBody: String(row.dmBody ?? ""),
         categoryTag: String(row.categoryTag ?? ""),
+        categoryId: row.categoryId ? String(row.categoryId) : null,
+        isDefault: Boolean(row.isDefault),
         useWhenNoCategoryMatch: Boolean(row.useWhenNoCategoryMatch),
       }));
       setTemplates(tItems);
@@ -372,6 +381,7 @@ export function MarketingDashboard({
         setTplName(row.name);
         setTplSubject(row.subject);
         setTplBody(row.body);
+        setTplDmBody(row.dmBody);
         setTplCategoryTag(row.categoryTag ?? "");
         setTplUseWhenNoCategoryMatch(Boolean(row.useWhenNoCategoryMatch));
       } else if (!tItems.length) {
@@ -379,6 +389,7 @@ export function MarketingDashboard({
         setTplName("");
         setTplSubject("");
         setTplBody("");
+        setTplDmBody("");
         setTplCategoryTag("");
         setTplUseWhenNoCategoryMatch(false);
       }
@@ -423,8 +434,8 @@ export function MarketingDashboard({
     return categories.find((c) => c._id === categorySelectValue)?.name ?? "";
   }, [categories, categorySelectValue]);
 
-  const selectedTemplate = useMemo(() => {
-    return templates.find((t) => t._id === selectedTplId) ?? templates[0] ?? null;
+  const selectedTemplateIsDefault = useMemo(() => {
+    return templates.find((t) => t._id === selectedTplId)?.isDefault === true;
   }, [templates, selectedTplId]);
 
   useEffect(() => {
@@ -434,12 +445,13 @@ export function MarketingDashboard({
     setTplName(row.name);
     setTplSubject(row.subject);
     setTplBody(row.body);
+    setTplDmBody(row.dmBody ?? "");
     setTplCategoryTag(row.categoryTag ?? "");
     setTplUseWhenNoCategoryMatch(Boolean(row.useWhenNoCategoryMatch));
   }, [selectedTplId, templates, tplDirty]);
 
+  /** Previews the live editor drafts so edits show immediately, before saving. */
   const previewMerged = useMemo(() => {
-    if (!selectedTemplate) return "";
     const map = buildMergeMap(
       mergeFields.map((f) => ({ key: f.key, value: f.value })),
       {
@@ -447,8 +459,12 @@ export function MarketingDashboard({
         category: selectedCategoryName || "General",
       },
     );
-    return applyMergeTemplate(selectedTemplate.body, map);
-  }, [selectedTemplate, mergeFields, selectedCategoryName]);
+    return {
+      subject: applyMergeTemplate(tplSubject, map),
+      email: applyMergeTemplate(tplBody, map),
+      dm: applyMergeTemplate(tplDmBody, map),
+    };
+  }, [tplSubject, tplBody, tplDmBody, mergeFields, selectedCategoryName]);
 
   const saveSettings = async () => {
     try {
@@ -512,6 +528,7 @@ export function MarketingDashboard({
         body: JSON.stringify({
           mode,
           categoryName: mode === "category" ? selectedCategoryName : undefined,
+          categoryId: mode === "category" ? categorySelectValue || undefined : undefined,
           nameQuery: nameQuery.trim() || undefined,
           locationAddress: locDraft.trim() || undefined,
           radiusMiles: radiusDraft,
@@ -650,7 +667,14 @@ export function MarketingDashboard({
   };
 
   const deleteCategory = async (id: string) => {
-    if (!window.confirm("Delete this category?")) return;
+    const name = categories.find((c) => c._id === id)?.name ?? "this category";
+    if (
+      !window.confirm(
+        `Delete "${name}"? Its auto-created email/DM template will be removed too. Templates you added yourself are kept.`,
+      )
+    ) {
+      return;
+    }
     try {
       await apiJson(`/api/categories/${id}`, { method: "DELETE" });
       await refresh();
@@ -668,6 +692,7 @@ export function MarketingDashboard({
           name: tplName,
           subject: tplSubject,
           body: tplBody,
+          dmBody: tplDmBody,
           categoryTag: tplCategoryTag.trim(),
           useWhenNoCategoryMatch: tplUseWhenNoCategoryMatch,
         }),
@@ -684,14 +709,8 @@ export function MarketingDashboard({
     if (!name) return;
     try {
       setNewTemplateBusy(true);
-      await apiJson("/api/templates", {
-        method: "POST",
-        body: JSON.stringify({
-          name,
-          subject: "New outreach",
-          body: "Hi {{businessName}},\n\n{{myName}}",
-        }),
-      });
+      // Server fills in default email + DM copy when they're omitted.
+      await apiJson("/api/templates", { method: "POST", body: JSON.stringify({ name }) });
       setNewTemplateName("");
       setNewTemplateModalOpen(false);
       setTplDirty(false);
@@ -789,6 +808,31 @@ export function MarketingDashboard({
       window.alert(e instanceof Error ? e.message : "Failed");
     } finally {
       setDeleteLeadBusy(false);
+    }
+  };
+
+  const exportLeads = async () => {
+    try {
+      setExportBusy(true);
+      const res = await fetch("/api/leads/export");
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error || "Export failed");
+      }
+      const blob = await res.blob();
+      const stamp = new Date().toISOString().slice(0, 10);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `leads-${stamp}.xls`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Export failed");
+    } finally {
+      setExportBusy(false);
     }
   };
 
@@ -1460,21 +1504,38 @@ export function MarketingDashboard({
 
             <section className="rounded-sm border border-lux-line bg-lux-panel/95 p-8 shadow-[0_1px_0_var(--color-lux-rim)_inset] sm:p-10">
               <h2 className="font-serif text-xl font-semibold text-lux-fg">Categories</h2>
-              <p className="mt-1 text-xs text-lux-muted">Add or remove labels used for search and leads.</p>
+              <p className="mt-1 text-xs text-lux-muted">
+                Adding a category creates a matching email/DM template you can edit; removing it deletes that
+                template. Categories marked <span className="text-lux-gold-bright">default</span> are always
+                available and can&apos;t be removed, though you can rename them and edit their templates freely.
+              </p>
               <ul className="mt-4 flex flex-wrap gap-2">
                 {categories.map((c) => (
                   <li
                     key={c._id}
-                    className="flex items-center gap-2 rounded-sm border border-lux-line bg-lux-field px-3 py-2 text-xs"
+                    className={`flex items-center gap-2 rounded-sm border px-3 py-2 text-xs ${
+                      c.isDefault
+                        ? "border-[color:var(--color-lux-gold-line)] bg-lux-gold-soft"
+                        : "border-lux-line bg-lux-field"
+                    }`}
                   >
                     <span>{c.name}</span>
-                    <button
-                      type="button"
-                      onClick={() => void deleteCategory(c._id)}
-                      className="text-lux-crimson hover:underline"
-                    >
-                      remove
-                    </button>
+                    {c.isDefault ? (
+                      <span
+                        className="text-[9px] font-semibold uppercase tracking-wider text-lux-gold-muted"
+                        title="Built-in category — always available. Its templates are fully editable."
+                      >
+                        default
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void deleteCategory(c._id)}
+                        className="text-lux-crimson hover:underline"
+                      >
+                        remove
+                      </button>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -1510,14 +1571,24 @@ export function MarketingDashboard({
                   </span>
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => setDeleteAllModalOpen(true)}
-                disabled={stats.leadsFound === 0}
-                className="rounded-sm border border-lux-crimson/45 bg-lux-crimson-soft/30 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-lux-crimson transition hover:bg-lux-crimson-soft disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Delete all leads
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void exportLeads()}
+                  disabled={stats.leadsFound === 0 || exportBusy}
+                  className="rounded-sm border border-lux-teal/40 bg-lux-teal/10 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-lux-link transition hover:border-lux-teal/60 hover:bg-lux-teal/15 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {exportBusy ? "Exporting…" : "Export Excel"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDeleteAllModalOpen(true)}
+                  disabled={stats.leadsFound === 0}
+                  className="rounded-sm border border-lux-crimson/45 bg-lux-crimson-soft/30 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-lux-crimson transition hover:bg-lux-crimson-soft disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Delete all leads
+                </button>
+              </div>
             </div>
             <div className="mt-6 flex flex-col gap-4 rounded-sm border border-lux-line bg-lux-panel/90 p-4 sm:flex-row sm:flex-wrap sm:items-end">
               <label className="block min-w-[200px] flex-1 space-y-1">
@@ -1616,8 +1687,14 @@ export function MarketingDashboard({
                 </button>
                 <button
                   type="button"
+                  disabled={selectedTemplateIsDefault}
                   onClick={() => setDeleteTemplateModalOpen(true)}
-                  className="rounded-sm border border-lux-crimson/40 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-lux-crimson hover:bg-lux-crimson-soft"
+                  title={
+                    selectedTemplateIsDefault
+                      ? "Default templates can't be deleted, but you can edit their content."
+                      : undefined
+                  }
+                  className="rounded-sm border border-lux-crimson/40 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-lux-crimson transition hover:bg-lux-crimson-soft disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
                 >
                   Delete selected
                 </button>
@@ -1637,7 +1714,14 @@ export function MarketingDashboard({
                           : "border-lux-line bg-lux-panel/80 hover:border-lux-gold/35"
                       }`}
                     >
-                      <span className="text-sm font-medium text-lux-fg">{tpl.name}</span>
+                      <span className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-medium text-lux-fg">{tpl.name}</span>
+                        {tpl.isDefault ? (
+                          <span className="shrink-0 text-[9px] font-semibold uppercase tracking-wider text-lux-gold-muted">
+                            default
+                          </span>
+                        ) : null}
+                      </span>
                     </button>
                   </li>
                 ))}
@@ -1653,17 +1737,6 @@ export function MarketingDashboard({
                     onChange={(e) => {
                       setTplDirty(true);
                       setTplName(e.target.value);
-                    }}
-                    className="mt-1 w-full rounded-sm border border-lux-line bg-lux-field px-3 py-2 text-sm text-lux-fg outline-none focus:border-lux-gold"
-                  />
-                </label>
-                <label className="mt-3 block text-xs text-lux-muted">
-                  Subject
-                  <input
-                    value={tplSubject}
-                    onChange={(e) => {
-                      setTplDirty(true);
-                      setTplSubject(e.target.value);
                     }}
                     className="mt-1 w-full rounded-sm border border-lux-line bg-lux-field px-3 py-2 text-sm text-lux-fg outline-none focus:border-lux-gold"
                   />
@@ -1698,31 +1771,80 @@ export function MarketingDashboard({
                     email). Only one template can have this on at a time.
                   </span>
                 </label>
-                <label className="mt-3 block text-xs text-lux-muted">
-                  Body (use {"{{myName}}"}, {"{{businessName}}"}, etc.)
-                  <textarea
-                    value={tplBody}
-                    onChange={(e) => {
-                      setTplDirty(true);
-                      setTplBody(e.target.value);
-                    }}
-                    rows={12}
-                    className="mt-1 w-full rounded-sm border border-lux-line bg-lux-field px-3 py-2 font-mono text-xs text-lux-fg-dim outline-none focus:border-lux-gold"
-                  />
-                </label>
+                <section className="mt-8 rounded-sm border border-[color:var(--color-lux-gold-line)]/45 bg-lux-canvas/60 p-5">
+                  <h3 className="font-serif text-base font-semibold text-lux-gold-bright">Email template</h3>
+                  <p className="mt-0.5 text-[10px] text-lux-subtle">
+                    Sent to leads that have an email address. Supports a subject line.
+                  </p>
+                  <label className="mt-4 block text-xs text-lux-muted">
+                    Subject
+                    <input
+                      value={tplSubject}
+                      onChange={(e) => {
+                        setTplDirty(true);
+                        setTplSubject(e.target.value);
+                      }}
+                      className="mt-1 w-full rounded-sm border border-lux-line bg-lux-field px-3 py-2 text-sm text-lux-fg outline-none focus:border-lux-gold"
+                    />
+                  </label>
+                  <label className="mt-3 block text-xs text-lux-muted">
+                    Email body (use {"{{myName}}"}, {"{{businessName}}"}, etc.)
+                    <textarea
+                      value={tplBody}
+                      onChange={(e) => {
+                        setTplDirty(true);
+                        setTplBody(e.target.value);
+                      }}
+                      rows={12}
+                      className="mt-1 w-full rounded-sm border border-lux-line bg-lux-field px-3 py-2 font-mono text-xs text-lux-fg-dim outline-none focus:border-lux-gold"
+                    />
+                  </label>
+                </section>
+
+                <section className="mt-6 rounded-sm border border-lux-teal/35 bg-lux-canvas/60 p-5">
+                  <h3 className="font-serif text-base font-semibold text-lux-link">DM template</h3>
+                  <p className="mt-0.5 text-[10px] text-lux-subtle">
+                    Sent to leads that only have Instagram or Facebook. No subject line — keep it short.
+                  </p>
+                  <label className="mt-4 block text-xs text-lux-muted">
+                    DM body
+                    <textarea
+                      value={tplDmBody}
+                      onChange={(e) => {
+                        setTplDirty(true);
+                        setTplDmBody(e.target.value);
+                      }}
+                      rows={5}
+                      className="mt-1 w-full rounded-sm border border-lux-line bg-lux-field px-3 py-2 font-mono text-xs text-lux-fg-dim outline-none focus:border-lux-teal"
+                    />
+                  </label>
+                </section>
+
                 <button
                   type="button"
                   onClick={() => void saveTemplate()}
-                  className="mt-4 rounded-sm bg-lux-primary px-5 py-2 text-xs font-semibold text-lux-primary-fg"
+                  className="mt-6 rounded-sm bg-lux-primary px-5 py-2 text-xs font-semibold text-lux-primary-fg"
                 >
                   Save template
                 </button>
               </div>
               <div className="rounded-sm border border-lux-line bg-lux-canvas p-8 shadow-[0_14px_40px_-16px_rgba(0,0,0,0.4)]">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-lux-teal">Body preview</p>
-                <div className="mt-4 max-h-[340px] overflow-auto rounded-sm border border-lux-line bg-lux-field p-4 shadow-[inset_0_2px_14px_rgba(0,0,0,0.5)]">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-lux-teal">Preview</p>
+                <p className="mt-3 text-[10px] font-semibold uppercase tracking-wider text-lux-gold-muted">Email</p>
+                <div className="mt-2 max-h-[340px] overflow-auto rounded-sm border border-lux-line bg-lux-field p-4 shadow-[inset_0_2px_14px_rgba(0,0,0,0.5)]">
+                  {previewMerged.subject ? (
+                    <p className="mb-3 border-b border-lux-line-soft pb-2 font-mono text-[11px] text-lux-gold-bright">
+                      Subject: {previewMerged.subject}
+                    </p>
+                  ) : null}
                   <pre className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-lux-muted">
-                    {previewMerged}
+                    {previewMerged.email}
+                  </pre>
+                </div>
+                <p className="mt-5 text-[10px] font-semibold uppercase tracking-wider text-lux-gold-muted">DM</p>
+                <div className="mt-2 max-h-[200px] overflow-auto rounded-sm border border-lux-line bg-lux-field p-4 shadow-[inset_0_2px_14px_rgba(0,0,0,0.5)]">
+                  <pre className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-lux-muted">
+                    {previewMerged.dm}
                   </pre>
                 </div>
               </div>

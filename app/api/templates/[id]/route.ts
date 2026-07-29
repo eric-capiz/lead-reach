@@ -18,6 +18,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
       name?: string;
       subject?: string;
       body?: string;
+      dmBody?: string;
       categoryTag?: string;
       useWhenNoCategoryMatch?: boolean;
       order?: number;
@@ -26,6 +27,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
     if (typeof body.name === "string") patch.name = body.name.trim();
     if (typeof body.subject === "string") patch.subject = body.subject;
     if (typeof body.body === "string") patch.body = body.body;
+    if (typeof body.dmBody === "string") patch.dmBody = body.dmBody;
     if (typeof body.categoryTag === "string") patch.categoryTag = body.categoryTag;
     if (typeof body.order === "number") patch.order = body.order;
     if (typeof body.useWhenNoCategoryMatch === "boolean") {
@@ -54,13 +56,19 @@ export async function DELETE(_req: Request, ctx: Ctx) {
     if (!mongoose.isValidObjectId(id)) {
       return NextResponse.json({ error: "Invalid id" }, { status: 400 });
     }
-    const count = await TemplateModel.countDocuments({ userId });
-    if (count <= 1) {
-      return NextResponse.json({ error: "Cannot delete the last template" }, { status: 400 });
+    const target = await TemplateModel.findOne({ _id: id, userId }).select("isDefault").lean();
+    if (!target) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    if (target.isDefault) {
+      return NextResponse.json(
+        { error: "Default templates can't be deleted, but you can edit their content freely." },
+        { status: 400 },
+      );
     }
+
+    // Deleting the last non-default template is allowed — runs no longer require one. Orphaned
+    // leads fall back to any remaining template, or to null.
     const fallback = await TemplateModel.findOne({ _id: { $ne: id }, userId }).sort({ order: 1 }).select("_id");
-    if (!fallback) return NextResponse.json({ error: "No fallback template" }, { status: 500 });
-    await LeadModel.updateMany({ templateId: id, userId }, { templateId: fallback._id });
+    await LeadModel.updateMany({ templateId: id, userId }, { $set: { templateId: fallback?._id ?? null } });
     const doc = await TemplateModel.findOneAndDelete({ _id: id, userId }).lean();
     if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json({ ok: true });

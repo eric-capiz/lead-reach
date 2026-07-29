@@ -94,6 +94,7 @@ type SocialProgressState = {
   totalBatches: number;
   checkedSoFar: number;
   updatedSoFar: number;
+  currentLeadName?: string;
 };
 
 const tabs: { id: TabId; label: string }[] = [
@@ -556,20 +557,23 @@ export function MarketingDashboard({
     runSocialScrape("both");
   };
 
-  /** POST sends **current page** lead ids that still need FB/IG (same count as pagination limit). */
+  /** POST one lead at a time so the progress popup can update live. */
   const runSocialScrape = (network: "facebook" | "instagram" | "both") => {
     void (async () => {
       try {
         setSocialsBusy(true);
-        const ids = leads.filter(pageLeadNeedsSocialEnrichment).map((l) => l._id);
+        const eligible = leads.filter(pageLeadNeedsSocialEnrichment);
+        const ids = eligible.map((l) => l._id);
+        const total = ids.length;
+
         setSocialProgress({
           batchDone: 0,
-          totalBatches: Math.max(1, ids.length),
+          totalBatches: Math.max(1, total),
           checkedSoFar: 0,
           updatedSoFar: 0,
         });
 
-        if (ids.length === 0) {
+        if (total === 0) {
           showSocialSuccess({
             processedLeads: 0,
             updatedLeads: 0,
@@ -579,71 +583,48 @@ export function MarketingDashboard({
           return;
         }
 
-        const res = await apiJson<SocialSearchApiResponse>("/api/runs/social-search", {
-          method: "POST",
-          body: JSON.stringify({ network, leadIds: ids }),
-        });
+        let updatedSoFar = 0;
+        const leadById = new Map(eligible.map((l) => [l._id, l]));
 
-        if (res.batch) {
-          if (Array.isArray(res.results)) {
-            console.log("[get-socials] batch", res.processed, "updated", res.updatedCount, res.results);
-          }
+        for (let i = 0; i < ids.length; i++) {
+          const id = ids[i]!;
+          const lead = leadById.get(id);
+          const leadName = lead?.businessName?.trim() || "Lead";
+
           setSocialProgress({
-            batchDone: res.processed ?? ids.length,
-            totalBatches: res.processed ?? ids.length,
-            checkedSoFar: res.processed ?? ids.length,
-            updatedSoFar: res.updatedCount ?? 0,
+            batchDone: i,
+            totalBatches: total,
+            checkedSoFar: i,
+            updatedSoFar,
+            currentLeadName: leadName,
           });
-          await refresh();
-          showSocialSuccess({
-            processedLeads: res.processed ?? ids.length,
-            updatedLeads: res.updatedCount ?? 0,
-            scrapeNote: res.note,
+
+          const res = await apiJson<SocialSearchApiResponse>("/api/runs/social-search", {
+            method: "POST",
+            body: JSON.stringify({ network, leadIds: [id] }),
           });
-          return;
-        }
 
-        if (res.urlsFromSearchResults) {
-          console.log("[get-socials] urls-from-results", res.urlsFromSearchResults);
-        }
+          if (res.batch && Array.isArray(res.results)) {
+            updatedSoFar += res.updatedCount ?? 0;
+            console.log("[get-socials] lead", i + 1, "of", total, res.results);
+          } else if (res.updated) {
+            updatedSoFar += 1;
+          }
 
-        if (res.skipped && res.skipReason === "no_leads") return;
-
-        if (res.skipped && res.skipReason === "none_need_socials") {
-          await refresh();
-          showSocialSuccess({
-            processedLeads: 0,
-            updatedLeads: 0,
-            scrapeNote: res.note,
-            skipReason: "none_need_socials",
+          setSocialProgress({
+            batchDone: i + 1,
+            totalBatches: total,
+            checkedSoFar: i + 1,
+            updatedSoFar,
+            currentLeadName: leadName,
           });
-          return;
         }
-
-        if (res.skipped && res.skipReason === "no_search_query") {
-          await refresh();
-          showSocialSuccess({
-            processedLeads: 0,
-            updatedLeads: 0,
-            scrapeNote: res.note,
-            skipReason: "no_search_query",
-          });
-          return;
-        }
-
-        setSocialProgress({
-          batchDone: 1,
-          totalBatches: 1,
-          checkedSoFar: 1,
-          updatedSoFar: res.updated ? 1 : 0,
-        });
 
         await refresh();
-
         showSocialSuccess({
-          processedLeads: 1,
-          updatedLeads: res.updated ? 1 : 0,
-          scrapeNote: res.note,
+          processedLeads: total,
+          updatedLeads: updatedSoFar,
+          scrapeNote: `Checked ${total} lead(s) on this page. Saved ${updatedSoFar} new social link(s).`,
         });
       } catch (e) {
         window.alert(e instanceof Error ? e.message : "Social search failed");
@@ -1221,9 +1202,15 @@ export function MarketingDashboard({
               <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-lux-teal">Social links</p>
               <h2 className="mt-1 font-serif text-lg font-semibold tracking-tight text-lux-fg">Fetching socials…</h2>
               <p className="mt-2 text-sm text-lux-muted">
-                {socialProgress.batchDone === 0
-                  ? "Running Facebook and Instagram searches for one lead (often 1–3 minutes)."
-                  : "Finishing up…"}
+                {socialProgress.totalBatches <= 1
+                  ? socialProgress.currentLeadName
+                    ? `Checking ${socialProgress.currentLeadName} (often 1–3 minutes per lead).`
+                    : "Running Facebook and Instagram searches for one lead (often 1–3 minutes)."
+                  : socialProgress.checkedSoFar < socialProgress.totalBatches
+                    ? `Checking lead ${Math.min(socialProgress.checkedSoFar + 1, socialProgress.totalBatches)} of ${socialProgress.totalBatches}${
+                        socialProgress.currentLeadName ? `: ${socialProgress.currentLeadName}` : ""
+                      }`
+                    : `Finished ${socialProgress.totalBatches} lead(s).`}
               </p>
               <p className="mt-2 font-mono text-[11px] text-lux-fg-dim">
                 Leads checked: {socialProgress.checkedSoFar} · New links saved: {socialProgress.updatedSoFar}

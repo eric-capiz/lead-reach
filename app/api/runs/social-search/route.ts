@@ -5,11 +5,15 @@ import { requireCurrentUserId } from "@/server/auth/session";
 import { connectDB } from "@/server/db/connect";
 import {
   fetchSocialCandidatesForQuery,
-  pickBestSocialCandidate,
-  pickFirstProfileUrlFromSerpUrls,
   serpSearchUrlForQuery,
   socialSearchStem,
 } from "@/server/services/google-serp-scrape";
+import {
+  entriesFromUrls,
+  isTrustedSocialUrlForLead,
+  pickBestSocialCandidate,
+  type SocialCandidateEntry,
+} from "@/server/services/social-handle-probe";
 import {
   hasLeadSocialUrl,
   leadNeedsSocialEnrichment,
@@ -49,6 +53,26 @@ export type OneLeadSocialResult = {
   };
   skippedReason?: "already_complete" | "no_search_query" | "not_found";
 };
+
+function mergeCandidateEntries(
+  primary: SocialCandidateEntry[],
+  serpUrls: string[],
+  serpSource: "serp" | "playwright",
+): SocialCandidateEntry[] {
+  return [...primary, ...entriesFromUrls(serpUrls, serpSource)];
+}
+
+async function resolveSocialProfile(
+  r: Awaited<ReturnType<typeof fetchSocialCandidatesForQuery>>,
+  network: "facebook" | "instagram",
+  businessName: string,
+  location: string,
+): Promise<{ chosen: string | null; chosenFromSerpSample: boolean }> {
+  const serpSource = r.fetchSource === "playwright" ? "playwright" : "serp";
+  const entries = mergeCandidateEntries(r.candidateEntries, r.urlsFromSearchResults, serpSource);
+  const chosen = await pickBestSocialCandidate(entries, businessName, location, network);
+  return { chosen, chosenFromSerpSample: false };
+}
 
 function dedupePreserveOrder(ids: string[]): string[] {
   const seen = new Set<string>();
@@ -122,15 +146,25 @@ async function enrichSingleLead(
   };
 
   if (needFb && network !== "instagram" && cached && hasLeadSocialUrl(cached.facebook)) {
-    patch.facebook = cached.facebook as string;
-    socialDebug.cacheHitFacebook = true;
-    socialDebug.facebook = { fromCache: true, chosen: patch.facebook };
+    const ok = await isTrustedSocialUrlForLead(cached.facebook as string, "facebook", biz, loc);
+    if (ok) {
+      patch.facebook = cached.facebook as string;
+      socialDebug.cacheHitFacebook = true;
+      socialDebug.facebook = { fromCache: true, chosen: patch.facebook };
+    } else {
+      socialDebug.cacheRejectedFacebook = cached.facebook;
+    }
   }
 
   if (needIg && network !== "facebook" && cached && hasLeadSocialUrl(cached.instagram)) {
-    patch.instagram = cached.instagram as string;
-    socialDebug.cacheHitInstagram = true;
-    socialDebug.instagram = { fromCache: true, chosen: patch.instagram };
+    const ok = await isTrustedSocialUrlForLead(cached.instagram as string, "instagram", biz, loc);
+    if (ok) {
+      patch.instagram = cached.instagram as string;
+      socialDebug.cacheHitInstagram = true;
+      socialDebug.instagram = { fromCache: true, chosen: patch.instagram };
+    } else {
+      socialDebug.cacheRejectedInstagram = cached.instagram;
+    }
   }
 
   if (needFb && network !== "instagram" && !patch.facebook) {
@@ -141,8 +175,7 @@ async function enrichSingleLead(
         businessName: biz || null,
         location: loc || null,
       });
-      const fbSerp = pickFirstProfileUrlFromSerpUrls(r.urlsFromSearchResults, "facebook");
-      const fb = fbSerp ?? pickBestSocialCandidate(r.candidates, biz, loc, "facebook");
+      const { chosen: fb, chosenFromSerpSample } = await resolveSocialProfile(r, "facebook", biz, loc);
       serpSampleFb.query = q;
       serpSampleFb.winningQuery = r.winningQuery ?? null;
       serpSampleFb.urls = r.urlsFromSearchResults;
@@ -164,8 +197,9 @@ async function enrichSingleLead(
         htmlLength: r.htmlLength,
         searchUrl: r.searchUrl,
         candidates: r.candidates,
+        candidateEntries: r.candidateEntries,
         chosen: fb,
-        chosenFromSerpSample: !!fbSerp,
+        chosenFromSerpSample,
       };
       if (fb) patch.facebook = fb;
     } catch (e) {
@@ -183,8 +217,7 @@ async function enrichSingleLead(
         businessName: biz || null,
         location: loc || null,
       });
-      const igSerp = pickFirstProfileUrlFromSerpUrls(r.urlsFromSearchResults, "instagram");
-      const ig = igSerp ?? pickBestSocialCandidate(r.candidates, biz, loc, "instagram");
+      const { chosen: ig, chosenFromSerpSample } = await resolveSocialProfile(r, "instagram", biz, loc);
       serpSampleIg.query = q;
       serpSampleIg.winningQuery = r.winningQuery ?? null;
       serpSampleIg.urls = r.urlsFromSearchResults;
@@ -201,8 +234,9 @@ async function enrichSingleLead(
         htmlLength: r.htmlLength,
         searchUrl: r.searchUrl,
         candidates: r.candidates,
+        candidateEntries: r.candidateEntries,
         chosen: ig,
-        chosenFromSerpSample: !!igSerp,
+        chosenFromSerpSample,
       };
       if (ig) patch.instagram = ig;
     } catch (e) {

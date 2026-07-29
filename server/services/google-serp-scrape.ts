@@ -3,6 +3,15 @@
  * Regex extraction only — no cheerio.
  */
 
+import {
+  cityGuessFromLocation,
+  isLikelyProfileUrl,
+  looseFacebookOk,
+  looseInstagramOk,
+} from "@/server/lib/social-profile-url";
+
+export { cityGuessFromLocation, isLikelyProfileUrl } from "@/server/lib/social-profile-url";
+
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
@@ -60,65 +69,6 @@ function unwrapFbRedirect(url: string): string {
     /* ignore */
   }
   return url;
-}
-
-function facebookHostOk(host: string): boolean {
-  const h = host.replace(/^www\./i, "").toLowerCase();
-  if (h === "fb.com" || h.endsWith(".fb.com")) return true;
-  if (h === "facebook.com" || h.endsWith(".facebook.com")) {
-    if (h.startsWith("static.") || h.includes("fbcdn")) return false;
-    return true;
-  }
-  return false;
-}
-
-function looseFacebookOk(url: string): boolean {
-  try {
-    const u = new URL(url);
-    if (!facebookHostOk(u.hostname)) return false;
-    const p = u.pathname.toLowerCase();
-    if (/\/(login|privacy|policies|share|sharer|dialog)(\/|$)/.test(p)) return false;
-    return u.pathname.length > 1;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Accept only profile URLs `instagram.com/<handle>` (one segment).
- * Rejects posts/reels/explore/popular hubs and Meta-owned handles like `/instagram` (official app account).
- */
-function looseInstagramOk(url: string): boolean {
-  try {
-    const u = new URL(url);
-    const h = u.hostname.replace(/^www\./i, "").toLowerCase();
-    if (h !== "instagram.com" && !h.endsWith(".instagram.com")) return false;
-    const parts = u.pathname.replace(/\/$/, "").split("/").filter(Boolean);
-    if (parts.length !== 1) return false;
-    const handle = parts[0]!.toLowerCase();
-    if (handle.length < 2) return false;
-    const RESERVED = new Set([
-      "instagram",
-      "creators",
-      "about",
-      "explore",
-      "accounts",
-      "legal",
-      "help",
-      "press",
-      "popular",
-      "reel",
-      "reels",
-      "p",
-      "tv",
-      "stories",
-      "direct",
-      "developer",
-    ]);
-    return !RESERVED.has(handle);
-  } catch {
-    return false;
-  }
 }
 
 function makeCollector(kind: "facebook" | "instagram") {
@@ -329,18 +279,6 @@ function businessNameGuessFromBase(base: string): string {
   const digitIdx = beforeComma.search(/\d/);
   if (digitIdx <= 0) return beforeComma.trim();
   return beforeComma.slice(0, digitIdx).trim();
-}
-
-/** First location segment that looks like a city (skip leading street lines and bare US states). */
-export function cityGuessFromLocation(location: string): string | null {
-  const parts = location.split(",").map((s) => s.trim()).filter(Boolean);
-  for (const p of parts) {
-    if (/^\d/.test(p)) continue;
-    const t = p.replace(/\s+/g, " ").trim();
-    if (/^[A-Za-z]{2}(\s+\d{5}(-\d{4})?)?$/i.test(t)) continue;
-    if (t.length >= 2) return t;
-  }
-  return null;
 }
 
 /**
@@ -561,11 +499,13 @@ async function collectFromSearchEngines(
 
 export type SocialScrapeFetchResult = {
   candidates: string[];
+  /** All candidates with provenance for unified scoring. */
+  candidateEntries: import("@/server/services/social-handle-probe").SocialCandidateEntry[];
   googleStatus: number;
   htmlLength: number;
   htmlSnippet: string;
   searchUrl: string;
-  fetchSource: "yahoo" | "website" | "mixed" | "playwright" | "none";
+  fetchSource: "yahoo" | "website" | "mixed" | "playwright" | "direct_probe" | "none";
   googleWasChallenge: boolean;
   /** Winning SERP page URL when results came from Yahoo HTTP fetch (not Playwright-only). */
   serpSearchUrl?: string;
@@ -590,6 +530,7 @@ export async function fetchSocialCandidatesForQuery(
   const normalizedSite = normalizeWebsiteUrl(options?.websiteUri);
   const fromWebsite: string[] = [];
   let websiteStatus: number | undefined;
+  const candidateEntries: import("@/server/services/social-handle-probe").SocialCandidateEntry[] = [];
 
   if (normalizedSite) {
     const { html, status } = await fetchPageHtml(normalizedSite);
@@ -597,8 +538,16 @@ export async function fetchSocialCandidatesForQuery(
     if (html.length > 0) {
       for (const c of collectFromHtmlBlob(html.replace(/&amp;/gi, "&"), network)) {
         if (!fromWebsite.includes(c)) fromWebsite.push(c);
+        candidateEntries.push({ url: c, source: "website" });
       }
     }
+  }
+
+  const bizName = options?.businessName?.trim();
+  if (bizName && bizName.length >= 2) {
+    const { probeDirectHandleCandidates } = await import("@/server/services/social-handle-probe");
+    const direct = await probeDirectHandleCandidates(bizName, network, options?.location ?? undefined);
+    candidateEntries.push(...direct);
   }
 
   const baseForAlts = query.replace(/\s+facebook\s*$/i, "").replace(/\s+instagram\s*$/i, "").trim();
@@ -616,9 +565,14 @@ export async function fetchSocialCandidatesForQuery(
     seen.add(c);
     merged.push(c);
   }
+  for (const c of engine.candidates) {
+    candidateEntries.push({ url: c, source: "serp" });
+  }
 
   let fetchSource: SocialScrapeFetchResult["fetchSource"] = engine.fetchSource;
-  if (fromWebsite.length > 0 && engine.candidates.length > 0) fetchSource = "mixed";
+  const directCount = candidateEntries.filter((e) => e.source === "direct_probe").length;
+  if (directCount > 0 && merged.length === 0) fetchSource = "direct_probe";
+  else if (fromWebsite.length > 0 && engine.candidates.length > 0) fetchSource = "mixed";
   else if (fromWebsite.length > 0 && engine.candidates.length === 0) fetchSource = "website";
 
   let winningQ: string | null = engine.winningQuery;
@@ -644,6 +598,7 @@ export async function fetchSocialCandidatesForQuery(
         if (seen.has(c)) continue;
         seen.add(c);
         merged.push(c);
+        candidateEntries.push({ url: c, source: "playwright" });
       }
       if (fromWebsite.length > 0) fetchSource = "mixed";
       else if (engine.candidates.length > 0) fetchSource = "mixed";
@@ -697,8 +652,13 @@ export async function fetchSocialCandidatesForQuery(
   }
   const urlsFromSearchResults = sampleUrls.slice(0, SERP_URL_SAMPLE_MAX);
 
+  for (const u of urlsFromSearchResults) {
+    candidateEntries.push({ url: u, source: fetchSource === "playwright" ? "playwright" : "serp" });
+  }
+
   return {
     candidates: merged,
+    candidateEntries,
     googleStatus: engine.googleStatus,
     htmlLength: htmlOutLen,
     htmlSnippet,
@@ -712,19 +672,6 @@ export async function fetchSocialCandidatesForQuery(
     winningQuery: winningQ,
     urlsFromSearchResults,
   };
-}
-
-export function pickBestSocialCandidate(
-  candidates: string[],
-  _businessName?: string,
-  _location?: string,
-  _kind?: "facebook" | "instagram",
-): string | null {
-  return candidates[0] ?? null;
-}
-
-export function isLikelyProfileUrl(url: string, kind: "facebook" | "instagram"): boolean {
-  return kind === "facebook" ? looseFacebookOk(url) : looseInstagramOk(url);
 }
 
 /** Normalize and validate a social URL for persistence (unwrap Yahoo hops, strip hash, trim slash). */

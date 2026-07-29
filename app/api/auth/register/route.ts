@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
-import { AppSettingsModel, UserModel } from "@/server/db/models";
+import { UserModel } from "@/server/db/models";
 import { createSessionToken, setSessionCookie } from "@/server/auth/session";
+import { ensureUserSeeded } from "@/server/services/seed-defaults";
 import { connectDB } from "@/server/db/connect";
 
 export async function POST(req: Request) {
@@ -35,12 +36,7 @@ export async function POST(req: Request) {
     const token = createSessionToken(String(user._id));
     await setSessionCookie(token);
 
-    await AppSettingsModel.create({
-      userId: user._id,
-      locationAddress: "",
-      radiusMiles: 50,
-      websiteFilter: "no_website",
-    });
+    await ensureUserSeeded(user._id);
 
     return NextResponse.json({ ok: true });
   } catch (e) {

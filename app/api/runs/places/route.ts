@@ -28,22 +28,25 @@ function heuristicGeneralTemplateId(
 }
 
 /**
- * Pick template for this run:
- * 1) Template **name** matches the category label (case insensitive)
- * 2) Else **categoryTag** matches
- * 3) Else template with **useWhenNoCategoryMatch** (explicit default)
- * 4) Else heuristic "general" (tag/name)
- * Name-only runs: then first template by order if still unset.
- * Category runs: do **not** fall back to first template (avoids wrong vertical).
+ * Pick template for this run, in order of confidence:
+ * 1) Template linked to this **categoryId** (auto-created with the category)
+ * 2) Template **name** matches the category label (case insensitive)
+ * 3) Else **categoryTag** matches
+ * 4) Else template with **useWhenNoCategoryMatch** (explicit default)
+ * 5) Else heuristic "general" (tag/name)
+ * 6) Else first template by order
+ *
+ * Always resolves when the user has at least one template; returns null only when they have
+ * none, in which case the run still proceeds and leaves the lead's template unset.
  */
 async function resolveTemplateIdForPlacesRun(
   userId: string,
   categoryLabel: string,
-  mode: "category" | "name",
+  categoryId: string | null,
 ): Promise<mongoose.Types.ObjectId | null> {
   const templates = await TemplateModel.find({ userId })
     .sort({ order: 1 })
-    .select("_id name categoryTag useWhenNoCategoryMatch")
+    .select("_id name categoryTag categoryId useWhenNoCategoryMatch")
     .lean();
   if (!templates.length) return null;
 
@@ -53,18 +56,21 @@ async function resolveTemplateIdForPlacesRun(
     | undefined;
   const heuristicGeneral = heuristicGeneralTemplateId(templates);
 
-  if (mode === "name" || !normalizeCategoryTag(categoryLabel)) {
-    return explicitDefault ?? heuristicGeneral ?? fallbackFirst;
+  if (categoryId && mongoose.isValidObjectId(categoryId)) {
+    const linked = templates.find((t) => t.categoryId && String(t.categoryId) === categoryId);
+    if (linked) return linked._id as mongoose.Types.ObjectId;
   }
 
   const want = normalizeCategoryTag(categoryLabel);
-  const byName = templates.find((t) => normalizeCategoryTag(String(t.name ?? "")) === want);
-  if (byName) return byName._id as mongoose.Types.ObjectId;
+  if (want) {
+    const byName = templates.find((t) => normalizeCategoryTag(String(t.name ?? "")) === want);
+    if (byName) return byName._id as mongoose.Types.ObjectId;
 
-  const byTag = templates.find((t) => normalizeCategoryTag(String(t.categoryTag ?? "")) === want);
-  if (byTag) return byTag._id as mongoose.Types.ObjectId;
+    const byTag = templates.find((t) => normalizeCategoryTag(String(t.categoryTag ?? "")) === want);
+    if (byTag) return byTag._id as mongoose.Types.ObjectId;
+  }
 
-  return explicitDefault ?? heuristicGeneral ?? null;
+  return explicitDefault ?? heuristicGeneral ?? fallbackFirst;
 }
 
 export async function POST(req: Request) {
@@ -79,6 +85,7 @@ export async function POST(req: Request) {
     const body = (await req.json()) as {
       mode?: "category" | "name";
       categoryName?: string;
+      categoryId?: string;
       nameQuery?: string;
       locationAddress?: string;
       radiusMiles?: number;
@@ -134,18 +141,9 @@ export async function POST(req: Request) {
 
     const saved: string[] = [];
     const categoryLabel = mode === "category" ? (body.categoryName?.trim() || "") : "";
+    const categoryId = mode === "category" ? (body.categoryId?.trim() || null) : null;
 
-    const resolvedTemplateId = await resolveTemplateIdForPlacesRun(userId, categoryLabel, mode);
-
-    if (mode === "category" && normalizeCategoryTag(categoryLabel) && !resolvedTemplateId) {
-      return NextResponse.json(
-        {
-          error:
-            "No email template for this category. Match the category: rename a template to the same name as the category, set its optional category tag, turn on “Use when no category matches” on your general template, or name/tag a template as general.",
-        },
-        { status: 400 },
-      );
-    }
+    const resolvedTemplateId = await resolveTemplateIdForPlacesRun(userId, categoryLabel, categoryId);
 
     for (const p of filtered) {
       const websiteUri = p.websiteUri;

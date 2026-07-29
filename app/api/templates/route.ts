@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { TemplateModel } from "@/server/db/models";
 import { requireCurrentUserId } from "@/server/auth/session";
+import { defaultDmBody, defaultEmailBody, defaultSubject } from "@/server/services/default-templates";
 import { connectDB } from "@/server/db/connect";
 
 export async function GET() {
@@ -23,6 +24,7 @@ export async function POST(req: Request) {
       name?: string;
       subject?: string;
       body?: string;
+      dmBody?: string;
       categoryTag?: string;
       useWhenNoCategoryMatch?: boolean;
       order?: number;
@@ -33,8 +35,12 @@ export async function POST(req: Request) {
     const doc = await TemplateModel.create({
       userId,
       name,
-      subject: body.subject?.trim() ?? "",
-      body: body.body ?? "",
+      subject: body.subject?.trim() ?? defaultSubject(),
+      body: body.body ?? defaultEmailBody(),
+      dmBody: body.dmBody ?? defaultDmBody(),
+      // Templates created by hand are never tied to a category, so removing a category
+      // will not delete them.
+      categoryId: null,
       categoryTag: body.categoryTag?.trim() ?? "",
       useWhenNoCategoryMatch,
       order: typeof body.order === "number" ? body.order : 0,

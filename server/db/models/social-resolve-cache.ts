@@ -1,6 +1,6 @@
 import mongoose, { Schema, type InferSchemaType } from "mongoose";
 
-/** Shared cache by Google Place ID so the same POI never re-runs heavy search pipelines. */
+/** Shared cache by Google Place ID so the same POI never reruns heavy search pipelines. */
 const socialResolveCacheSchema = new Schema(
   {
     placeId: { type: String, required: true, trim: true, unique: true, index: true },

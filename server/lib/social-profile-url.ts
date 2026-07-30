@@ -1,4 +1,4 @@
-/** Shared IG/FB profile URL helpers — kept out of serp/scoring modules to avoid circular imports. */
+/** Shared IG/FB profile URL helpers, kept out of serp/scoring modules to avoid circular imports. */
 
 function facebookHostOk(host: string): boolean {
   const h = host.replace(/^www\./i, "").toLowerCase();
@@ -10,7 +10,7 @@ function facebookHostOk(host: string): boolean {
   return false;
 }
 
-export function looseFacebookOk(url: string): boolean {
+function looseFacebookOk(url: string): boolean {
   try {
     const u = new URL(url);
     if (!facebookHostOk(u.hostname)) return false;
@@ -23,10 +23,10 @@ export function looseFacebookOk(url: string): boolean {
 }
 
 /**
- * Accept only profile URLs `instagram.com/<handle>` (one segment).
- * Rejects posts/reels/explore/popular hubs and Meta-owned handles like `/instagram`.
+ * Accept only profile URLs instagram.com/<handle> (one segment).
+ * Rejects posts/reels/explore/popular hubs and Meta owned handles like /instagram.
  */
-export function looseInstagramOk(url: string): boolean {
+function looseInstagramOk(url: string): boolean {
   try {
     const u = new URL(url);
     const h = u.hostname.replace(/^www\./i, "").toLowerCase();

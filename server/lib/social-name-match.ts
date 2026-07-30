@@ -1,6 +1,6 @@
 /**
- * Universal business-name ↔ social handle matching.
- * Every auto-pick must prove relevance to the lead — not just "a valid profile exists".
+ * Universal business name to social handle matching.
+ * Every auto pick must prove relevance to the lead, not just that a valid profile exists.
  */
 
 import { cityGuessFromLocation } from "@/server/lib/social-profile-url";
@@ -8,7 +8,7 @@ import { cityGuessFromLocation } from "@/server/lib/social-profile-url";
 const LEGAL_SUFFIX =
   /\b(llc|l\.l\.c\.|inc|incorporated|co|company|corp|corporation|ltd|limited|pllc|lp|dba)\.?\b/gi;
 
-/** Stripped from names before token extraction — not distinctive business identity. */
+/** Stripped from names before token extraction; not distinctive business identity. */
 const NAME_STOPWORDS = new Set([
   "the",
   "and",
@@ -65,13 +65,11 @@ const GENERIC_HANDLES = new Set([
   "login",
 ]);
 
-export type SocialPickSource = "website" | "direct_probe" | "serp" | "playwright";
-
-export function normalizeForMatch(s: string): string {
+function normalizeForMatch(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-export function stripBusinessLegalSuffixes(name: string): string {
+function stripBusinessLegalSuffixes(name: string): string {
   return name
     .replace(LEGAL_SUFFIX, " ")
     .replace(/[''`]/g, "")
@@ -81,7 +79,7 @@ export function stripBusinessLegalSuffixes(name: string): string {
 }
 
 /** Distinctive tokens from a business name (stopwords + legal junk removed). */
-export function significantBusinessTokens(businessName: string): string[] {
+function significantBusinessTokens(businessName: string): string[] {
   const cleaned = stripBusinessLegalSuffixes(businessName).toLowerCase();
   const words = cleaned
     .split(/\s+/)
@@ -100,8 +98,8 @@ export function significantBusinessTokens(businessName: string): string[] {
   return [...new Set(out)];
 }
 
-/** City/state slugs from a lead location — used to reject geo-only false positives. */
-export function locationSlugTokens(location: string): string[] {
+/** City/state slugs from a lead location; used to reject geo only false positives. */
+function locationSlugTokens(location: string): string[] {
   const slugs: string[] = [];
   const city = cityGuessFromLocation(location);
   if (city) slugs.push(normalizeForMatch(city));
@@ -130,7 +128,7 @@ function tokenAppearsInBlob(token: string, blob: string): boolean {
   return false;
 }
 
-export function isGeographicOrGenericHandle(handle: string, location?: string): boolean {
+function isGeographicOrGenericHandle(handle: string, location?: string): boolean {
   const h = normalizeForMatch(handle);
   if (!h || h.length < 2) return true;
   if (GENERIC_HANDLES.has(h)) return true;
@@ -203,23 +201,16 @@ export function scoreBusinessRelevance(
 }
 
 /**
- * Source-specific bar for auto-pick. SERP/playwright need business tokens in the handle —
- * a city page or unrelated brand must not pass on location/title alone.
+ * Auto pick bar for SERP candidates. Needs business tokens in the handle or title;
+ * a city page or unrelated brand must not pass on location alone.
  */
-export function meetsAutoPickBar(source: SocialPickSource, rel: BusinessRelevance): boolean {
+export function meetsAutoPickBar(rel: BusinessRelevance): boolean {
   if (rel.geographicReject || rel.tokensMatched === 0) return false;
-
-  switch (source) {
-    case "website":
-      return rel.tokensMatched >= 1;
-    case "direct_probe":
-      return rel.handleTokenHits >= 1;
-    case "serp":
-    case "playwright":
-      if (rel.handleTokenHits === 0) return false;
-      if (rel.tokenTotal <= 1) return rel.handleTokenHits >= 1;
-      return rel.handleTokenHits >= 2 || (rel.handleTokenHits >= 1 && rel.titleTokenHits >= 1);
-    default:
-      return false;
-  }
+  if (rel.handleTokenHits === 0 && rel.titleTokenHits === 0) return false;
+  if (rel.tokenTotal <= 1) return rel.tokensMatched >= 1;
+  return (
+    rel.handleTokenHits >= 2 ||
+    (rel.handleTokenHits >= 1 && rel.titleTokenHits >= 1) ||
+    (rel.titleTokenHits >= 2 && rel.tokensMatched >= 2)
+  );
 }

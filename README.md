@@ -149,7 +149,7 @@ npm run build
 
 ## TODO
 
-1. ~~Social scraping~~ — shipped (Yahoo SERP + optional Playwright fallback; per-place cache; batch “Get socials” by leads page size).
-2. **Outreach send flow** (not built yet) — decide and implement: keep copy/paste + manual sending, and/or let the app send messages (e.g. email provider integration).
-3. ~~Google API safeguards~~ — done (quotas/limits and pre-deploy usage checks in place).
-4. ~~**Deploy to Vercel**~~ — MVP supported (env vars + Atlas access; see Deployment above).
+1. ~~Social scraping~~ shipped (DuckDuckGo/Brave/Bing SERP + optional Playwright fallback; per place cache; batch "Get socials" by leads page size).
+2. **Outreach send flow** (not built yet): decide and implement: keep copy/paste + manual sending, and/or let the app send messages (e.g. email provider integration).
+3. ~~Google API safeguards~~ done (quotas/limits and pre deploy usage checks in place).
+4. ~~**Deploy to Vercel**~~ MVP supported (env vars + Atlas access; see Deployment above).

@@ -75,13 +75,12 @@ type SocialSearchApiResponse = {
       winningQuery: string | null;
       urls: string[];
       serpSearchUrlForDisplayQuery?: string;
-      serpSearchAttempts?: { query: string; searchUrl: string }[];
     };
     instagram: { query: string | null; winningQuery: string | null; urls: string[] };
   };
 };
 
-/** Same rules as server `leadNeedsSocialEnrichment` — which rows on this page can still get socials. */
+/** Same rules as server leadNeedsSocialEnrichment: which rows on this page can still get socials. */
 function pageLeadNeedsSocialEnrichment(lead: LeadApi): boolean {
   const hasFb = typeof lead.facebook === "string" && lead.facebook.trim().length > 0;
   const hasIg = typeof lead.instagram === "string" && lead.instagram.trim().length > 0;
@@ -108,8 +107,25 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
   });
-  const j = (await r.json()) as T & { error?: string };
-  if (!r.ok) throw new Error((j as { error?: string }).error || r.statusText);
+  const raw = await r.text();
+  const trimmed = raw.trim();
+
+  // Turbopack sometimes returns an HTML error page instead of the route JSON after HMR/long runs.
+  if (trimmed.startsWith("<!") || trimmed.toLowerCase().startsWith("<html")) {
+    throw new Error(
+      "Dev server returned HTML instead of JSON (hot-reload glitch). Refresh the page, or restart `npm run dev` if it keeps happening.",
+    );
+  }
+
+  let j: T & { error?: string };
+  try {
+    j = JSON.parse(raw || "{}") as T & { error?: string };
+  } catch {
+    throw new Error(
+      `Bad response from ${path} (not JSON). Refresh the page or restart the dev server.`,
+    );
+  }
+  if (!r.ok) throw new Error(j.error || r.statusText);
   return j;
 }
 
@@ -847,10 +863,39 @@ export function MarketingDashboard({
   }
 
   if (bootError) {
+    const looksLikeMongo =
+      /MONGODB|mongo|Atlas|ECONNREFUSED|ENOTFOUND|whitelist|IP/i.test(bootError);
+    const looksLikeDevGlitch = /HTML instead of JSON|hot-reload|not JSON|Dev server/i.test(bootError);
     return (
       <div className="flex min-h-full flex-col items-center justify-center gap-4 bg-lux-bg px-6 text-center font-sans text-lux-crimson">
         <p>{bootError}</p>
-        <p className="max-w-md text-sm text-lux-muted">Check MONGODB_URI and that MongoDB Atlas allows your IP.</p>
+        {looksLikeMongo ? (
+          <p className="max-w-md text-sm text-lux-muted">
+            Check MONGODB_URI and that MongoDB Atlas allows your IP.
+          </p>
+        ) : looksLikeDevGlitch ? (
+          <p className="max-w-md text-sm text-lux-muted">
+            This is usually a Next.js dev-server hiccup during long Social Bot runs — not MongoDB.
+            Refresh first; if it persists, stop and restart `npm run dev`.
+          </p>
+        ) : (
+          <p className="max-w-md text-sm text-lux-muted">
+            Try refreshing. If it keeps failing after a Social Bot run, restart the dev server.
+          </p>
+        )}
+        <button
+          type="button"
+          className="rounded-lg border border-lux-line bg-lux-panel px-4 py-2 text-sm text-lux-fg hover:border-lux-gold/50"
+          onClick={() => {
+            setBootError(null);
+            setLoading(true);
+            void refresh()
+              .catch((e) => setBootError(e instanceof Error ? e.message : "Load failed"))
+              .finally(() => setLoading(false));
+          }}
+        >
+          Retry
+        </button>
       </div>
     );
   }
@@ -1339,7 +1384,7 @@ export function MarketingDashboard({
                       ? "All leads already have both social links, or none have a name or location to search"
                       : loading
                         ? "Loading workspace…"
-                        : `Enrich leads on the current Leads table page (up to ${LEADS_PAGE_SIZE}). Uses cache when a Google place was resolved before; searches Yahoo only for missing links. Go to the next page and click again for more rows.`
+                        : `Enrich leads on the current Leads table page (up to ${LEADS_PAGE_SIZE}). Uses cache when a Google place was resolved before; searches DuckDuckGo/Brave/Bing only for missing links. Go to the next page and click again for more rows.`
                   }
                 >
                   {socialsBusy ? "Working…" : "Get socials"}

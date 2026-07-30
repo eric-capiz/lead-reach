@@ -3,17 +3,13 @@ import mongoose from "mongoose";
 import { LeadModel, SocialResolveCacheModel } from "@/server/db/models";
 import { requireCurrentUserId } from "@/server/auth/session";
 import { connectDB } from "@/server/db/connect";
+import { serpSearchUrlForQuery, socialSearchStem } from "@/server/services/social-serp";
 import {
-  fetchSocialCandidatesForQuery,
-  serpSearchUrlForQuery,
-  socialSearchStem,
-} from "@/server/services/google-serp-scrape";
-import {
-  entriesFromUrls,
-  isTrustedSocialUrlForLead,
-  pickBestSocialCandidate,
-  type SocialCandidateEntry,
-} from "@/server/services/social-handle-probe";
+  adLibraryUrlsForNetwork,
+  searchAdLibraryPages,
+} from "@/server/services/social-ad-library";
+import { resolveSocialProfile, trustExistingSocialUrl } from "@/server/services/social-resolve";
+import { isSocialLlmEnabled as groqEnabled } from "@/server/services/social-llm";
 import {
   hasLeadSocialUrl,
   leadNeedsSocialEnrichment,
@@ -27,7 +23,6 @@ export const maxDuration = 300;
 
 type ReqBody = {
   network?: string;
-  /** Current leads table page — processed in order. Max {@link LEADS_PAGE_SIZE} ids. */
   leadIds?: string[];
 };
 
@@ -36,7 +31,6 @@ type SerpUrlSample = {
   winningQuery: string | null;
   urls: string[];
   serpSearchUrlForDisplayQuery?: string;
-  serpSearchAttempts?: { query: string; searchUrl: string }[];
 };
 
 export type OneLeadSocialResult = {
@@ -54,26 +48,6 @@ export type OneLeadSocialResult = {
   skippedReason?: "already_complete" | "no_search_query" | "not_found";
 };
 
-function mergeCandidateEntries(
-  primary: SocialCandidateEntry[],
-  serpUrls: string[],
-  serpSource: "serp" | "playwright",
-): SocialCandidateEntry[] {
-  return [...primary, ...entriesFromUrls(serpUrls, serpSource)];
-}
-
-async function resolveSocialProfile(
-  r: Awaited<ReturnType<typeof fetchSocialCandidatesForQuery>>,
-  network: "facebook" | "instagram",
-  businessName: string,
-  location: string,
-): Promise<{ chosen: string | null; chosenFromSerpSample: boolean }> {
-  const serpSource = r.fetchSource === "playwright" ? "playwright" : "serp";
-  const entries = mergeCandidateEntries(r.candidateEntries, r.urlsFromSearchResults, serpSource);
-  const chosen = await pickBestSocialCandidate(entries, businessName, location, network);
-  return { chosen, chosenFromSerpSample: false };
-}
-
 function dedupePreserveOrder(ids: string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -89,9 +63,9 @@ type LeadDocLike = {
   _id: mongoose.Types.ObjectId;
   businessName?: string;
   location?: string;
+  phone?: string;
   facebook?: unknown;
   instagram?: unknown;
-  websiteUri?: unknown;
   googlePlaceId?: unknown;
 };
 
@@ -102,6 +76,7 @@ async function enrichSingleLead(
 ): Promise<OneLeadSocialResult> {
   const loc = (lead.location ?? "").trim();
   const biz = (lead.businessName ?? "").trim();
+  const phone = (lead.phone ?? "").trim();
   const leadLine = leadSearchableBase(lead);
   const searchStem = socialSearchStem(biz, loc) ?? (leadLine.trim() || null);
   if (!searchStem) {
@@ -112,12 +87,7 @@ async function enrichSingleLead(
       instagram: (lead.instagram as string | null) ?? null,
       updated: false,
       note: "Add a business name or location on this lead to search for social profiles.",
-      socialDebug: {
-        step: "no_search_query",
-        leadId: String(lead._id),
-        businessName: biz,
-        location: loc,
-      },
+      socialDebug: { step: "no_search_query", leadId: String(lead._id) },
       skippedReason: "no_search_query",
     };
   }
@@ -131,118 +101,131 @@ async function enrichSingleLead(
   const patch: { facebook?: string; instagram?: string } = {};
   const placeId = String(lead.googlePlaceId ?? "").trim();
   const cached = placeId ? await SocialResolveCacheModel.findOne({ placeId }).lean() : null;
+  const aiMode = groqEnabled();
 
   const socialDebug: Record<string, unknown> = {
     step: "searched",
     leadId: String(lead._id),
     placeId,
-    cacheHitFacebook: false,
-    cacheHitInstagram: false,
     searchStem,
-    leadLine,
     network,
     needFb,
     needIg,
+    aiMode,
+    cacheHitFacebook: false,
+    cacheHitInstagram: false,
   };
 
   if (needFb && network !== "instagram" && cached && hasLeadSocialUrl(cached.facebook)) {
-    const ok = await isTrustedSocialUrlForLead(cached.facebook as string, "facebook", biz, loc);
+    const ok = await trustExistingSocialUrl(cached.facebook as string, biz, loc, "facebook");
     if (ok) {
       patch.facebook = cached.facebook as string;
       socialDebug.cacheHitFacebook = true;
-      socialDebug.facebook = { fromCache: true, chosen: patch.facebook };
     } else {
       socialDebug.cacheRejectedFacebook = cached.facebook;
     }
   }
 
   if (needIg && network !== "facebook" && cached && hasLeadSocialUrl(cached.instagram)) {
-    const ok = await isTrustedSocialUrlForLead(cached.instagram as string, "instagram", biz, loc);
+    const ok = await trustExistingSocialUrl(cached.instagram as string, biz, loc, "instagram");
     if (ok) {
       patch.instagram = cached.instagram as string;
       socialDebug.cacheHitInstagram = true;
-      socialDebug.instagram = { fromCache: true, chosen: patch.instagram };
     } else {
       socialDebug.cacheRejectedInstagram = cached.instagram;
     }
   }
 
+  // One Ad Library lookup per lead — often returns FB page + linked IG handle together
+  let adFb: string[] = [];
+  let adIg: string[] = [];
+  if ((needFb && network !== "instagram" && !patch.facebook) || (needIg && network !== "facebook" && !patch.instagram)) {
+    try {
+      const hits = await searchAdLibraryPages(biz);
+      adFb = adLibraryUrlsForNetwork(hits, "facebook");
+      adIg = adLibraryUrlsForNetwork(hits, "instagram");
+      socialDebug.adLibrary = { facebook: adFb, instagram: adIg, hitCount: hits.length };
+    } catch (e) {
+      socialDebug.adLibrary = { error: e instanceof Error ? e.message : "failed" };
+    }
+  }
+
+  // FACEBOOK search (separate)
   if (needFb && network !== "instagram" && !patch.facebook) {
     try {
-      const q = `${searchStem} facebook`;
-      const r = await fetchSocialCandidatesForQuery(q, "facebook", {
-        websiteUri: lead.websiteUri as string | null | undefined,
-        businessName: biz || null,
-        location: loc || null,
+      console.log(`[social-search] FB search start: ${biz}`);
+      const result = await resolveSocialProfile({
+        businessName: biz,
+        location: loc,
+        phone,
+        network: "facebook",
+        extraCandidates: adFb,
       });
-      const { chosen: fb, chosenFromSerpSample } = await resolveSocialProfile(r, "facebook", biz, loc);
-      serpSampleFb.query = q;
-      serpSampleFb.winningQuery = r.winningQuery ?? null;
-      serpSampleFb.urls = r.urlsFromSearchResults;
-      serpSampleFb.serpSearchUrlForDisplayQuery = serpSearchUrlForQuery(q);
-      serpSampleFb.serpSearchAttempts = (r.engineAttempts ?? []).map((a) => ({
-        query: a.query,
-        searchUrl: serpSearchUrlForQuery(a.query),
-      }));
+      console.log(
+        `[social-search] FB search done: chosen=${result.chosen ?? "none"} candidates=${result.candidateUrls.length}`,
+      );
+      serpSampleFb.query = result.searchQuery;
+      serpSampleFb.winningQuery = result.winningQuery;
+      serpSampleFb.urls = result.candidateUrls;
+      serpSampleFb.serpSearchUrlForDisplayQuery =
+        result.searchUrl ?? serpSearchUrlForQuery(result.searchQuery);
       socialDebug.facebook = {
-        query: q,
-        googleStatus: r.googleStatus,
-        fetchSource: r.fetchSource,
-        googleWasChallenge: r.googleWasChallenge,
-        serpSearchUrl: r.serpSearchUrl,
-        websiteTried: r.websiteTried,
-        websiteStatus: r.websiteStatus,
-        winningQuery: r.winningQuery,
-        engineAttempts: r.engineAttempts,
-        htmlLength: r.htmlLength,
-        searchUrl: r.searchUrl,
-        candidates: r.candidates,
-        candidateEntries: r.candidateEntries,
-        chosen: fb,
-        chosenFromSerpSample,
+        sources: result.sources,
+        searchQuery: result.searchQuery,
+        candidates: result.candidateUrls,
+        aiPick: result.aiPick,
+        attempts: result.attempts,
+        chosen: result.chosen,
       };
-      if (fb) patch.facebook = fb;
+      if (result.chosen) patch.facebook = result.chosen;
     } catch (e) {
       const msg = e instanceof Error ? e.message : "unknown error";
       fetchIssues.push("Facebook search could not be completed.");
       socialDebug.facebook = { error: msg };
+      console.error(`[social-search] FB search error: ${msg}`);
     }
   }
 
+  // INSTAGRAM search (separate; always its own name + Instagram SERP)
   if (needIg && network !== "facebook" && !patch.instagram) {
     try {
-      const q = `${searchStem} instagram`;
-      const r = await fetchSocialCandidatesForQuery(q, "instagram", {
-        websiteUri: lead.websiteUri as string | null | undefined,
-        businessName: biz || null,
-        location: loc || null,
+      const fbHint =
+        patch.facebook ??
+        (hasLeadSocialUrl(lead.facebook) ? String(lead.facebook) : null) ??
+        adFb[0] ??
+        null;
+      console.log(`[social-search] IG search start: ${biz}`);
+      const result = await resolveSocialProfile({
+        businessName: biz,
+        location: loc,
+        phone,
+        network: "instagram",
+        extraCandidates: adIg,
+        facebookUrlHint: fbHint,
       });
-      const { chosen: ig, chosenFromSerpSample } = await resolveSocialProfile(r, "instagram", biz, loc);
-      serpSampleIg.query = q;
-      serpSampleIg.winningQuery = r.winningQuery ?? null;
-      serpSampleIg.urls = r.urlsFromSearchResults;
+      console.log(
+        `[social-search] IG search done: chosen=${result.chosen ?? "none"} candidates=${result.candidateUrls.length} sources=${result.sources.join(",")}`,
+      );
+      serpSampleIg.query = result.searchQuery;
+      serpSampleIg.winningQuery = result.winningQuery;
+      serpSampleIg.urls = result.candidateUrls;
+      serpSampleIg.serpSearchUrlForDisplayQuery =
+        result.searchUrl ?? serpSearchUrlForQuery(result.searchQuery);
       socialDebug.instagram = {
-        query: q,
-        googleStatus: r.googleStatus,
-        fetchSource: r.fetchSource,
-        googleWasChallenge: r.googleWasChallenge,
-        serpSearchUrl: r.serpSearchUrl,
-        websiteTried: r.websiteTried,
-        websiteStatus: r.websiteStatus,
-        winningQuery: r.winningQuery,
-        engineAttempts: r.engineAttempts,
-        htmlLength: r.htmlLength,
-        searchUrl: r.searchUrl,
-        candidates: r.candidates,
-        candidateEntries: r.candidateEntries,
-        chosen: ig,
-        chosenFromSerpSample,
+        sources: result.sources,
+        searchQuery: result.searchQuery,
+        candidates: result.candidateUrls,
+        aiPick: result.aiPick,
+        attempts: result.attempts,
+        chosen: result.chosen,
+        facebookUrlHint: fbHint,
       };
-      if (ig) patch.instagram = ig;
+      if (result.chosen) patch.instagram = result.chosen;
     } catch (e) {
       const msg = e instanceof Error ? e.message : "unknown error";
       fetchIssues.push("Instagram search could not be completed.");
       socialDebug.instagram = { error: msg };
+      console.error(`[social-search] IG search error: ${msg}`);
     }
   }
 
@@ -271,64 +254,30 @@ async function enrichSingleLead(
   }
   socialDebug.leadUpdateMatched = leadUpdateMatched;
 
-  const urlsFromSearchResults = {
-    facebook: serpSampleFb,
-    instagram: serpSampleIg,
-  };
-
-  console.log(
-    "[social-search] urls-from-results",
-    JSON.stringify(
-      {
-        leadId: String(lead._id),
-        searchStem,
-        facebook: {
-          query: serpSampleFb.query,
-          winningQuery: serpSampleFb.winningQuery,
-          urls: serpSampleFb.urls,
-          serpSearchUrlForDisplayQuery: serpSampleFb.serpSearchUrlForDisplayQuery,
-          serpSearchAttempts: serpSampleFb.serpSearchAttempts,
-        },
-        instagram: {
-          query: serpSampleIg.query,
-          winningQuery: serpSampleIg.winningQuery,
-          urls: serpSampleIg.urls,
-        },
-      },
-      null,
-      2,
-    ),
-  );
-
   const parts: string[] = [...fetchIssues];
   if (!patch.facebook && needFb && !fetchIssues.some((x) => x.includes("Facebook"))) {
-    parts.push("No Facebook profile matched in search results.");
+    parts.push("No Facebook profile verified for this lead.");
   }
   if (!patch.instagram && needIg && !fetchIssues.some((x) => x.includes("Instagram"))) {
-    parts.push("No Instagram profile matched in search results.");
+    parts.push("No Instagram profile verified for this lead.");
   }
-
-  let note: string | undefined;
-  if (parts.length) note = parts.join(" ");
-
-  const updated = Object.keys(patch).length > 0;
 
   return {
     leadId: String(lead._id),
     businessName: lead.businessName ?? "",
     facebook: patch.facebook ?? (lead.facebook as string | null) ?? null,
     instagram: patch.instagram ?? (lead.instagram as string | null) ?? null,
-    updated,
-    note,
+    updated: Object.keys(patch).length > 0,
+    note: parts.length ? parts.join(" ") : undefined,
     socialDebug,
-    urlsFromSearchResults,
+    urlsFromSearchResults: { facebook: serpSampleFb, instagram: serpSampleIg },
   };
 }
 
 /**
  * Body: `{ network?, leadIds? }`.
- * - With **`leadIds`**: enrich those leads (current table page), order preserved, max {@link LEADS_PAGE_SIZE}.
- * - Without **`leadIds`**: legacy — one lead globally (newest that still needs FB/IG).
+ * With `leadIds`: enrich those leads (current table page), order preserved.
+ * Without `leadIds`: one lead globally that still needs FB/IG.
  */
 export async function POST(req: Request) {
   try {
@@ -399,18 +348,13 @@ export async function POST(req: Request) {
           });
           continue;
         }
-        const r = await enrichSingleLead(lead as LeadDocLike, userId, network);
-        results.push(r);
+        results.push(await enrichSingleLead(lead as LeadDocLike, userId, network));
       }
 
       const updatedCount = results.filter((r) => r.updated).length;
       const noteParts: string[] = [];
-      if (invalid) {
-        noteParts.push(`Only the first ${LEADS_PAGE_SIZE} ids were processed.`);
-      }
-      noteParts.push(
-        `Updated ${updatedCount} of ${results.length} lead(s) on this page (cache used when possible).`,
-      );
+      if (invalid) noteParts.push(`Only the first ${LEADS_PAGE_SIZE} ids were processed.`);
+      noteParts.push(`Updated ${updatedCount} of ${results.length} lead(s) on this page.`);
 
       return NextResponse.json({
         ok: true,
@@ -446,7 +390,6 @@ export async function POST(req: Request) {
     }
 
     const lead = allLeads.find((l) => leadNeedsSocialEnrichment(l));
-
     if (!lead) {
       return NextResponse.json({
         ok: true,
@@ -465,7 +408,6 @@ export async function POST(req: Request) {
     }
 
     const one = await enrichSingleLead(lead as LeadDocLike, userId, network);
-
     return NextResponse.json({
       ok: true,
       pilot: true,

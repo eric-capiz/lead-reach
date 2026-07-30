@@ -75,13 +75,12 @@ type SocialSearchApiResponse = {
       winningQuery: string | null;
       urls: string[];
       serpSearchUrlForDisplayQuery?: string;
-      serpSearchAttempts?: { query: string; searchUrl: string }[];
     };
     instagram: { query: string | null; winningQuery: string | null; urls: string[] };
   };
 };
 
-/** Same rules as server `leadNeedsSocialEnrichment` — which rows on this page can still get socials. */
+/** Same rules as server leadNeedsSocialEnrichment: which rows on this page can still get socials. */
 function pageLeadNeedsSocialEnrichment(lead: LeadApi): boolean {
   const hasFb = typeof lead.facebook === "string" && lead.facebook.trim().length > 0;
   const hasIg = typeof lead.instagram === "string" && lead.instagram.trim().length > 0;
@@ -94,6 +93,7 @@ type SocialProgressState = {
   totalBatches: number;
   checkedSoFar: number;
   updatedSoFar: number;
+  currentLeadName?: string;
 };
 
 const tabs: { id: TabId; label: string }[] = [
@@ -107,8 +107,25 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
   });
-  const j = (await r.json()) as T & { error?: string };
-  if (!r.ok) throw new Error((j as { error?: string }).error || r.statusText);
+  const raw = await r.text();
+  const trimmed = raw.trim();
+
+  // Turbopack sometimes returns an HTML error page instead of the route JSON after HMR/long runs.
+  if (trimmed.startsWith("<!") || trimmed.toLowerCase().startsWith("<html")) {
+    throw new Error(
+      "Dev server returned HTML instead of JSON (hot-reload glitch). Refresh the page, or restart `npm run dev` if it keeps happening.",
+    );
+  }
+
+  let j: T & { error?: string };
+  try {
+    j = JSON.parse(raw || "{}") as T & { error?: string };
+  } catch {
+    throw new Error(
+      `Bad response from ${path} (not JSON). Refresh the page or restart the dev server.`,
+    );
+  }
+  if (!r.ok) throw new Error(j.error || r.statusText);
   return j;
 }
 
@@ -556,20 +573,23 @@ export function MarketingDashboard({
     runSocialScrape("both");
   };
 
-  /** POST sends **current page** lead ids that still need FB/IG (same count as pagination limit). */
+  /** POST one lead at a time so the progress popup can update live. */
   const runSocialScrape = (network: "facebook" | "instagram" | "both") => {
     void (async () => {
       try {
         setSocialsBusy(true);
-        const ids = leads.filter(pageLeadNeedsSocialEnrichment).map((l) => l._id);
+        const eligible = leads.filter(pageLeadNeedsSocialEnrichment);
+        const ids = eligible.map((l) => l._id);
+        const total = ids.length;
+
         setSocialProgress({
           batchDone: 0,
-          totalBatches: Math.max(1, ids.length),
+          totalBatches: Math.max(1, total),
           checkedSoFar: 0,
           updatedSoFar: 0,
         });
 
-        if (ids.length === 0) {
+        if (total === 0) {
           showSocialSuccess({
             processedLeads: 0,
             updatedLeads: 0,
@@ -579,71 +599,48 @@ export function MarketingDashboard({
           return;
         }
 
-        const res = await apiJson<SocialSearchApiResponse>("/api/runs/social-search", {
-          method: "POST",
-          body: JSON.stringify({ network, leadIds: ids }),
-        });
+        let updatedSoFar = 0;
+        const leadById = new Map(eligible.map((l) => [l._id, l]));
 
-        if (res.batch) {
-          if (Array.isArray(res.results)) {
-            console.log("[get-socials] batch", res.processed, "updated", res.updatedCount, res.results);
-          }
+        for (let i = 0; i < ids.length; i++) {
+          const id = ids[i]!;
+          const lead = leadById.get(id);
+          const leadName = lead?.businessName?.trim() || "Lead";
+
           setSocialProgress({
-            batchDone: res.processed ?? ids.length,
-            totalBatches: res.processed ?? ids.length,
-            checkedSoFar: res.processed ?? ids.length,
-            updatedSoFar: res.updatedCount ?? 0,
+            batchDone: i,
+            totalBatches: total,
+            checkedSoFar: i,
+            updatedSoFar,
+            currentLeadName: leadName,
           });
-          await refresh();
-          showSocialSuccess({
-            processedLeads: res.processed ?? ids.length,
-            updatedLeads: res.updatedCount ?? 0,
-            scrapeNote: res.note,
+
+          const res = await apiJson<SocialSearchApiResponse>("/api/runs/social-search", {
+            method: "POST",
+            body: JSON.stringify({ network, leadIds: [id] }),
           });
-          return;
-        }
 
-        if (res.urlsFromSearchResults) {
-          console.log("[get-socials] urls-from-results", res.urlsFromSearchResults);
-        }
+          if (res.batch && Array.isArray(res.results)) {
+            updatedSoFar += res.updatedCount ?? 0;
+            console.log("[get-socials] lead", i + 1, "of", total, res.results);
+          } else if (res.updated) {
+            updatedSoFar += 1;
+          }
 
-        if (res.skipped && res.skipReason === "no_leads") return;
-
-        if (res.skipped && res.skipReason === "none_need_socials") {
-          await refresh();
-          showSocialSuccess({
-            processedLeads: 0,
-            updatedLeads: 0,
-            scrapeNote: res.note,
-            skipReason: "none_need_socials",
+          setSocialProgress({
+            batchDone: i + 1,
+            totalBatches: total,
+            checkedSoFar: i + 1,
+            updatedSoFar,
+            currentLeadName: leadName,
           });
-          return;
         }
-
-        if (res.skipped && res.skipReason === "no_search_query") {
-          await refresh();
-          showSocialSuccess({
-            processedLeads: 0,
-            updatedLeads: 0,
-            scrapeNote: res.note,
-            skipReason: "no_search_query",
-          });
-          return;
-        }
-
-        setSocialProgress({
-          batchDone: 1,
-          totalBatches: 1,
-          checkedSoFar: 1,
-          updatedSoFar: res.updated ? 1 : 0,
-        });
 
         await refresh();
-
         showSocialSuccess({
-          processedLeads: 1,
-          updatedLeads: res.updated ? 1 : 0,
-          scrapeNote: res.note,
+          processedLeads: total,
+          updatedLeads: updatedSoFar,
+          scrapeNote: `Checked ${total} lead(s) on this page. Saved ${updatedSoFar} new social link(s).`,
         });
       } catch (e) {
         window.alert(e instanceof Error ? e.message : "Social search failed");
@@ -866,10 +863,39 @@ export function MarketingDashboard({
   }
 
   if (bootError) {
+    const looksLikeMongo =
+      /MONGODB|mongo|Atlas|ECONNREFUSED|ENOTFOUND|whitelist|IP/i.test(bootError);
+    const looksLikeDevGlitch = /HTML instead of JSON|hot-reload|not JSON|Dev server/i.test(bootError);
     return (
       <div className="flex min-h-full flex-col items-center justify-center gap-4 bg-lux-bg px-6 text-center font-sans text-lux-crimson">
         <p>{bootError}</p>
-        <p className="max-w-md text-sm text-lux-muted">Check MONGODB_URI and that MongoDB Atlas allows your IP.</p>
+        {looksLikeMongo ? (
+          <p className="max-w-md text-sm text-lux-muted">
+            Check MONGODB_URI and that MongoDB Atlas allows your IP.
+          </p>
+        ) : looksLikeDevGlitch ? (
+          <p className="max-w-md text-sm text-lux-muted">
+            This is usually a Next.js dev-server hiccup during long Social Bot runs — not MongoDB.
+            Refresh first; if it persists, stop and restart `npm run dev`.
+          </p>
+        ) : (
+          <p className="max-w-md text-sm text-lux-muted">
+            Try refreshing. If it keeps failing after a Social Bot run, restart the dev server.
+          </p>
+        )}
+        <button
+          type="button"
+          className="rounded-lg border border-lux-line bg-lux-panel px-4 py-2 text-sm text-lux-fg hover:border-lux-gold/50"
+          onClick={() => {
+            setBootError(null);
+            setLoading(true);
+            void refresh()
+              .catch((e) => setBootError(e instanceof Error ? e.message : "Load failed"))
+              .finally(() => setLoading(false));
+          }}
+        >
+          Retry
+        </button>
       </div>
     );
   }
@@ -1221,9 +1247,15 @@ export function MarketingDashboard({
               <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-lux-teal">Social links</p>
               <h2 className="mt-1 font-serif text-lg font-semibold tracking-tight text-lux-fg">Fetching socials…</h2>
               <p className="mt-2 text-sm text-lux-muted">
-                {socialProgress.batchDone === 0
-                  ? "Running Facebook and Instagram searches for one lead (often 1–3 minutes)."
-                  : "Finishing up…"}
+                {socialProgress.totalBatches <= 1
+                  ? socialProgress.currentLeadName
+                    ? `Checking ${socialProgress.currentLeadName} (often 1–3 minutes per lead).`
+                    : "Running Facebook and Instagram searches for one lead (often 1–3 minutes)."
+                  : socialProgress.checkedSoFar < socialProgress.totalBatches
+                    ? `Checking lead ${Math.min(socialProgress.checkedSoFar + 1, socialProgress.totalBatches)} of ${socialProgress.totalBatches}${
+                        socialProgress.currentLeadName ? `: ${socialProgress.currentLeadName}` : ""
+                      }`
+                    : `Finished ${socialProgress.totalBatches} lead(s).`}
               </p>
               <p className="mt-2 font-mono text-[11px] text-lux-fg-dim">
                 Leads checked: {socialProgress.checkedSoFar} · New links saved: {socialProgress.updatedSoFar}
@@ -1352,7 +1384,7 @@ export function MarketingDashboard({
                       ? "All leads already have both social links, or none have a name or location to search"
                       : loading
                         ? "Loading workspace…"
-                        : `Enrich leads on the current Leads table page (up to ${LEADS_PAGE_SIZE}). Uses cache when a Google place was resolved before; searches Yahoo only for missing links. Go to the next page and click again for more rows.`
+                        : `Enrich leads on the current Leads table page (up to ${LEADS_PAGE_SIZE}). Uses cache when a Google place was resolved before; searches DuckDuckGo/Brave/Bing only for missing links. Go to the next page and click again for more rows.`
                   }
                 >
                   {socialsBusy ? "Working…" : "Get socials"}

@@ -1,4 +1,4 @@
-/** Helpers for deciding which leads still need Facebook / Instagram enrichment. */
+/** Helpers for deciding which leads still need Facebook or Instagram enrichment. */
 
 export function hasLeadSocialUrl(value: unknown): boolean {
   return typeof value === "string" && value.trim().length > 0;

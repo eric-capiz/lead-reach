@@ -1346,7 +1346,7 @@ export function MarketingDashboard({
                   Log out
                 </button>
               </div>
-              <div className="flex flex-wrap items-center gap-3 sm:flex-nowrap sm:justify-end">
+              <div className="flex flex-wrap items-start gap-3 sm:flex-nowrap sm:justify-end">
                 <nav
                   className="flex rounded-sm border border-lux-line bg-lux-panel/90 p-1 shadow-[0_1px_0_var(--color-lux-rim)_inset,0_12px_40px_-12px_rgba(0,0,0,0.45)] backdrop-blur-md"
                   aria-label="Dashboard sections"
@@ -1374,21 +1374,19 @@ export function MarketingDashboard({
                 >
                   Run Bot
                 </button>
-                <button
-                  type="button"
-                  disabled={runBusy || socialsBusy || !canGetSocials}
-                  onClick={() => scrapeSocialsForEligibleLeads()}
-                  className="rounded-sm border border-lux-teal/40 bg-lux-teal/10 px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-lux-link shadow-[0_8px_28px_-12px_rgba(0,0,0,0.45)] transition hover:border-lux-teal/60 hover:bg-lux-teal/15 disabled:opacity-40"
-                  title={
-                    stats.leadsNeedingSocials === 0
-                      ? "All leads already have both social links, or none have a name or location to search"
-                      : loading
-                        ? "Loading workspace…"
-                        : `Enrich leads on the current Leads table page (up to ${LEADS_PAGE_SIZE}). Uses cache when a Google place was resolved before; searches DuckDuckGo/Brave/Bing only for missing links. Go to the next page and click again for more rows.`
-                  }
-                >
-                  {socialsBusy ? "Working…" : "Get socials"}
-                </button>
+                <div className="flex flex-col items-center gap-1.5">
+                  <button
+                    type="button"
+                    disabled
+                    aria-disabled="true"
+                    className="rounded-sm border border-lux-teal/40 bg-lux-teal/10 px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-lux-link shadow-[0_8px_28px_-12px_rgba(0,0,0,0.45)] disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Get socials
+                  </button>
+                  <p className="max-w-[9.5rem] text-center text-[10px] leading-snug tracking-wide text-lux-muted">
+                    Unavailable at the moment
+                  </p>
+                </div>
               </div>
             </div>
           </div>

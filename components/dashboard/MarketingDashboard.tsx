@@ -47,55 +47,6 @@ type RunSuccessSummary = {
   savedCount: number;
 };
 
-type SocialBatchSummary = {
-  updatedLeads: number;
-  processedLeads: number;
-  scrapeNote?: string;
-  skipReason?: string;
-};
-
-type SocialSearchApiResponse = {
-  note?: string;
-  network?: string;
-  skipped?: boolean;
-  skipReason?: string;
-  batch?: boolean;
-  processed?: number;
-  updatedCount?: number;
-  pageSize?: number;
-  results?: unknown[];
-  businessName?: string;
-  facebook?: string | null;
-  instagram?: string | null;
-  updated?: boolean;
-  socialDebug?: unknown;
-  urlsFromSearchResults?: {
-    facebook: {
-      query: string | null;
-      winningQuery: string | null;
-      urls: string[];
-      serpSearchUrlForDisplayQuery?: string;
-    };
-    instagram: { query: string | null; winningQuery: string | null; urls: string[] };
-  };
-};
-
-/** Same rules as server leadNeedsSocialEnrichment: which rows on this page can still get socials. */
-function pageLeadNeedsSocialEnrichment(lead: LeadApi): boolean {
-  const hasFb = typeof lead.facebook === "string" && lead.facebook.trim().length > 0;
-  const hasIg = typeof lead.instagram === "string" && lead.instagram.trim().length > 0;
-  if (hasFb && hasIg) return false;
-  return `${lead.businessName ?? ""} ${lead.location ?? ""}`.trim().length > 0;
-}
-
-type SocialProgressState = {
-  batchDone: number;
-  totalBatches: number;
-  checkedSoFar: number;
-  updatedSoFar: number;
-  currentLeadName?: string;
-};
-
 const tabs: { id: TabId; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "leads", label: "Leads table" },
@@ -172,12 +123,8 @@ export function MarketingDashboard({
   const [bootError, setBootError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [runBusy, setRunBusy] = useState(false);
-  const [socialsBusy, setSocialsBusy] = useState(false);
   const [runSuccess, setRunSuccess] = useState<RunSuccessSummary | null>(null);
   const runSuccessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [socialSuccess, setSocialSuccess] = useState<SocialBatchSummary | null>(null);
-  const socialSuccessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [socialProgress, setSocialProgress] = useState<SocialProgressState | null>(null);
   const [setupModalOpen, setSetupModalOpen] = useState(Boolean(showSetupPopup));
   const [setupBusy, setSetupBusy] = useState(false);
 
@@ -193,30 +140,6 @@ export function MarketingDashboard({
     setRunSuccess(null);
   }, [clearRunSuccessTimer]);
 
-  const clearSocialSuccessTimer = useCallback(() => {
-    if (socialSuccessTimerRef.current) {
-      clearTimeout(socialSuccessTimerRef.current);
-      socialSuccessTimerRef.current = null;
-    }
-  }, []);
-
-  const dismissSocialSuccess = useCallback(() => {
-    clearSocialSuccessTimer();
-    setSocialSuccess(null);
-  }, [clearSocialSuccessTimer]);
-
-  const showSocialSuccess = useCallback(
-    (summary: SocialBatchSummary) => {
-      clearSocialSuccessTimer();
-      setSocialSuccess(summary);
-      socialSuccessTimerRef.current = setTimeout(() => {
-        setSocialSuccess(null);
-        socialSuccessTimerRef.current = null;
-      }, RUN_SUCCESS_AUTO_DISMISS_MS);
-    },
-    [clearSocialSuccessTimer],
-  );
-
   const showRunSuccess = useCallback(
     (summary: RunSuccessSummary) => {
       clearRunSuccessTimer();
@@ -230,7 +153,6 @@ export function MarketingDashboard({
   );
 
   useEffect(() => () => clearRunSuccessTimer(), [clearRunSuccessTimer]);
-  useEffect(() => () => clearSocialSuccessTimer(), [clearSocialSuccessTimer]);
   useEffect(() => {
     setSetupModalOpen(Boolean(showSetupPopup));
   }, [showSetupPopup]);
@@ -264,9 +186,7 @@ export function MarketingDashboard({
     leadsFound: 0,
     noWebsite: 0,
     emailsFound: 0,
-    socialMatches: 0,
     messagesSent: 0,
-    leadsNeedingSocials: 0,
   });
 
   const [selectedTplId, setSelectedTplId] = useState<string | null>(null);
@@ -363,9 +283,7 @@ export function MarketingDashboard({
             leadsFound: number;
             noWebsite: number;
             emailsFound: number;
-            socialMatches: number;
             messagesSent: number;
-            leadsNeedingSocials: number;
           };
         }>("/api/stats"),
         fetchLeadsPage(page, leadsSearchQuery, leadsSort),
@@ -564,91 +482,6 @@ export function MarketingDashboard({
     } finally {
       setRunBusy(false);
     }
-  };
-
-  const canGetSocials = !loading && stats.leadsNeedingSocials > 0;
-
-  const scrapeSocialsForEligibleLeads = () => {
-    if (!canGetSocials) return;
-    runSocialScrape("both");
-  };
-
-  /** POST one lead at a time so the progress popup can update live. */
-  const runSocialScrape = (network: "facebook" | "instagram" | "both") => {
-    void (async () => {
-      try {
-        setSocialsBusy(true);
-        const eligible = leads.filter(pageLeadNeedsSocialEnrichment);
-        const ids = eligible.map((l) => l._id);
-        const total = ids.length;
-
-        setSocialProgress({
-          batchDone: 0,
-          totalBatches: Math.max(1, total),
-          checkedSoFar: 0,
-          updatedSoFar: 0,
-        });
-
-        if (total === 0) {
-          showSocialSuccess({
-            processedLeads: 0,
-            updatedLeads: 0,
-            scrapeNote:
-              "No leads on this page need Facebook or Instagram. Try another page, or add a name/location on the lead.",
-          });
-          return;
-        }
-
-        let updatedSoFar = 0;
-        const leadById = new Map(eligible.map((l) => [l._id, l]));
-
-        for (let i = 0; i < ids.length; i++) {
-          const id = ids[i]!;
-          const lead = leadById.get(id);
-          const leadName = lead?.businessName?.trim() || "Lead";
-
-          setSocialProgress({
-            batchDone: i,
-            totalBatches: total,
-            checkedSoFar: i,
-            updatedSoFar,
-            currentLeadName: leadName,
-          });
-
-          const res = await apiJson<SocialSearchApiResponse>("/api/runs/social-search", {
-            method: "POST",
-            body: JSON.stringify({ network, leadIds: [id] }),
-          });
-
-          if (res.batch && Array.isArray(res.results)) {
-            updatedSoFar += res.updatedCount ?? 0;
-            console.log("[get-socials] lead", i + 1, "of", total, res.results);
-          } else if (res.updated) {
-            updatedSoFar += 1;
-          }
-
-          setSocialProgress({
-            batchDone: i + 1,
-            totalBatches: total,
-            checkedSoFar: i + 1,
-            updatedSoFar,
-            currentLeadName: leadName,
-          });
-        }
-
-        await refresh();
-        showSocialSuccess({
-          processedLeads: total,
-          updatedLeads: updatedSoFar,
-          scrapeNote: `Checked ${total} lead(s) on this page. Saved ${updatedSoFar} new social link(s).`,
-        });
-      } catch (e) {
-        window.alert(e instanceof Error ? e.message : "Social search failed");
-      } finally {
-        setSocialProgress(null);
-        setSocialsBusy(false);
-      }
-    })();
   };
 
   const addCategory = async () => {
@@ -850,7 +683,6 @@ export function MarketingDashboard({
     { label: "Leads found", value: stats.leadsFound },
     { label: "No website", value: stats.noWebsite },
     { label: "Emails found", value: stats.emailsFound },
-    { label: "Social matches", value: stats.socialMatches },
     { label: "Messages sent", value: stats.messagesSent },
   ] as const;
 
@@ -875,12 +707,12 @@ export function MarketingDashboard({
           </p>
         ) : looksLikeDevGlitch ? (
           <p className="max-w-md text-sm text-lux-muted">
-            This is usually a Next.js dev-server hiccup during long Social Bot runs — not MongoDB.
+            This is usually a Next.js dev-server hiccup — not MongoDB.
             Refresh first; if it persists, stop and restart `npm run dev`.
           </p>
         ) : (
           <p className="max-w-md text-sm text-lux-muted">
-            Try refreshing. If it keeps failing after a Social Bot run, restart the dev server.
+            Try refreshing. If it keeps failing, restart the dev server.
           </p>
         )}
         <button
@@ -1229,96 +1061,6 @@ export function MarketingDashboard({
         </div>
       ) : null}
 
-      {socialProgress && socialsBusy ? (
-        <div
-          className={`fixed left-1/2 z-50 w-[min(26rem,calc(100%-2rem))] -translate-x-1/2 sm:left-auto sm:right-8 sm:translate-x-0 ${
-            runSuccess ? "bottom-28 sm:bottom-28" : "bottom-6 sm:bottom-6"
-          }`}
-          role="status"
-          aria-live="polite"
-          aria-busy="true"
-        >
-          <div className="overflow-hidden rounded-2xl border border-lux-teal/45 bg-lux-panel/98 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.65)] ring-1 ring-lux-teal/30 backdrop-blur-md">
-            <div
-              className="h-1 w-full animate-pulse bg-gradient-to-r from-lux-teal/40 via-lux-teal/70 to-lux-teal/40"
-              aria-hidden
-            />
-            <div className="px-5 pb-4 pt-4">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-lux-teal">Social links</p>
-              <h2 className="mt-1 font-serif text-lg font-semibold tracking-tight text-lux-fg">Fetching socials…</h2>
-              <p className="mt-2 text-sm text-lux-muted">
-                {socialProgress.totalBatches <= 1
-                  ? socialProgress.currentLeadName
-                    ? `Checking ${socialProgress.currentLeadName} (often 1–3 minutes per lead).`
-                    : "Running Facebook and Instagram searches for one lead (often 1–3 minutes)."
-                  : socialProgress.checkedSoFar < socialProgress.totalBatches
-                    ? `Checking lead ${Math.min(socialProgress.checkedSoFar + 1, socialProgress.totalBatches)} of ${socialProgress.totalBatches}${
-                        socialProgress.currentLeadName ? `: ${socialProgress.currentLeadName}` : ""
-                      }`
-                    : `Finished ${socialProgress.totalBatches} lead(s).`}
-              </p>
-              <p className="mt-2 font-mono text-[11px] text-lux-fg-dim">
-                Leads checked: {socialProgress.checkedSoFar} · New links saved: {socialProgress.updatedSoFar}
-              </p>
-              <p className="mt-3 text-[10px] leading-relaxed text-lux-muted">
-                Safe to leave this tab open. A summary appears when this run completes.
-              </p>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {socialSuccess ? (
-        <div
-          className={`fixed left-1/2 z-50 w-[min(24rem,calc(100%-2rem))] -translate-x-1/2 sm:left-auto sm:right-8 sm:translate-x-0 ${
-            runSuccess ? "bottom-28 sm:bottom-28" : "bottom-6 sm:bottom-6"
-          }`}
-          role="status"
-          aria-live="polite"
-        >
-          <div className="overflow-hidden rounded-2xl border border-lux-teal/35 bg-lux-panel/95 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.65)] ring-1 ring-lux-teal/20 backdrop-blur-md">
-            <div className="h-1 w-full bg-gradient-to-r from-lux-teal/30 via-lux-teal/50 to-lux-teal/20" aria-hidden />
-            <div className="flex items-start justify-between gap-3 px-5 pb-3 pt-4">
-              <div className="min-w-0 flex-1">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-lux-teal">Social links</p>
-                <h2 className="mt-1 font-serif text-lg font-semibold tracking-tight text-lux-fg">
-                  {socialSuccess.skipReason === "none_need_socials"
-                    ? "Nothing to update"
-                    : socialSuccess.skipReason === "no_search_query"
-                      ? "Can't search yet"
-                      : socialSuccess.updatedLeads > 0
-                        ? "Social links added to leads"
-                        : "Social search complete"}
-                </h2>
-                {socialSuccess.skipReason === "none_need_socials" || socialSuccess.skipReason === "no_search_query" ? null : (
-                  <p className="mt-1 text-sm text-lux-muted">
-                    {socialSuccess.updatedLeads > 0
-                      ? `Saved for ${socialSuccess.updatedLeads} lead${socialSuccess.updatedLeads === 1 ? "" : "s"}.`
-                      : socialSuccess.processedLeads > 0
-                        ? `Checked ${socialSuccess.processedLeads} lead${socialSuccess.processedLeads === 1 ? "" : "s"}; no new links matched.`
-                        : null}
-                  </p>
-                )}
-                {socialSuccess.scrapeNote ? (
-                  <p className="mt-2 text-[11px] leading-relaxed text-lux-gold-bright">{socialSuccess.scrapeNote}</p>
-                ) : null}
-              </div>
-              <button
-                type="button"
-                onClick={dismissSocialSuccess}
-                className="shrink-0 rounded-sm border border-lux-line bg-lux-canvas/80 px-2 py-1 text-xs font-medium text-lux-muted transition hover:border-lux-teal/40 hover:text-lux-fg"
-                aria-label="Dismiss"
-              >
-                ×
-              </button>
-            </div>
-            <p className="border-t border-lux-line-soft px-5 py-2.5 text-center text-[10px] text-lux-muted">
-              One eligible lead per run (newest first). Click again for the next. Dismisses in 10 seconds.
-            </p>
-          </div>
-        </div>
-      ) : null}
-
       <div className="relative mx-auto max-w-6xl px-4 pb-24 pt-8 sm:px-6 lg:px-8">
         <header className="border-b border-[color:var(--color-lux-gold-line)]/50 pb-8">
           <div className="flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
@@ -1368,25 +1110,13 @@ export function MarketingDashboard({
                 </nav>
                 <button
                   type="button"
-                  disabled={runBusy || socialsBusy}
+                  disabled={runBusy}
                   onClick={() => void runPlaces("category")}
                   className="rounded-sm border border-[color:var(--color-lux-gold-line)] bg-lux-panel px-6 py-2.5 text-xs font-semibold uppercase tracking-[0.2em] text-lux-gold-bright shadow-[0_0_0_1px_rgba(201,162,39,0.12),0_12px_36px_-10px_rgba(0,0,0,0.5)] transition hover:bg-lux-gold-soft/30 hover:text-lux-fg disabled:opacity-40"
                 >
                   Run Bot
                 </button>
-                <div className="flex flex-col items-center gap-1.5">
-                  <button
-                    type="button"
-                    disabled
-                    aria-disabled="true"
-                    className="rounded-sm border border-lux-teal/40 bg-lux-teal/10 px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-lux-link shadow-[0_8px_28px_-12px_rgba(0,0,0,0.45)] disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    Get socials
-                  </button>
-                  <p className="max-w-[9.5rem] text-center text-[10px] leading-snug tracking-wide text-lux-muted">
-                    Unavailable at the moment
-                  </p>
-                </div>
+
               </div>
             </div>
           </div>
@@ -1396,7 +1126,7 @@ export function MarketingDashboard({
           <div className="mt-12 space-y-12">
             <section className="rounded-sm border border-lux-line bg-lux-panel/95 p-8 shadow-[0_1px_0_var(--color-lux-rim)_inset,0_24px_60px_-28px_rgba(0,0,0,0.55)] sm:p-10">
               <p className="max-w-2xl font-serif text-lg leading-relaxed text-lux-fg-dim">
-                Find category-based local businesses, flag weak or missing web presence, attach maps and social hints,
+                Find category-based local businesses, flag weak or missing web presence, attach maps,
                 then run templated outreach.{" "}
                 <span className="text-lux-fg">
                   Hard cap of <strong className="text-lux-gold-bright">20 leads per search run</strong>.
@@ -1404,7 +1134,7 @@ export function MarketingDashboard({
               </p>
             </section>
 
-            <section className="grid gap-3 sm:grid-cols-5">
+            <section className="grid gap-3 sm:grid-cols-4">
               {statRows.map((m, i) => (
                 <div
                   key={m.label}
@@ -1515,7 +1245,7 @@ export function MarketingDashboard({
                 </button>
                 <button
                   type="button"
-                  disabled={runBusy || socialsBusy}
+                  disabled={runBusy}
                   onClick={() => void runPlaces("category")}
                   className="rounded-sm border border-lux-line bg-lux-canvas px-5 py-2.5 text-xs font-semibold uppercase tracking-wider text-lux-fg-dim transition hover:border-lux-gold/40 hover:text-lux-gold-bright disabled:opacity-40"
                 >
@@ -1523,7 +1253,7 @@ export function MarketingDashboard({
                 </button>
                 <button
                   type="button"
-                  disabled={runBusy || socialsBusy}
+                  disabled={runBusy}
                   onClick={() => void runPlaces("name")}
                   className="rounded-sm border border-lux-line bg-lux-canvas px-5 py-2.5 text-xs font-semibold uppercase tracking-wider text-lux-fg-dim transition hover:border-lux-teal/40 hover:text-lux-link disabled:opacity-40"
                 >
@@ -1594,11 +1324,7 @@ export function MarketingDashboard({
               <div>
                 <h2 className="font-serif text-2xl font-semibold text-lux-fg">Leads</h2>
                 <p className="text-xs text-lux-muted">
-                  {LEADS_PAGE_SIZE} per page · newest first · leads come from your Places bot runs ·{" "}
-                  <span className="text-lux-fg-dim">
-                    Get socials fills FB/IG for every row on <strong>this page</strong> that still needs them (cache
-                    first), then run again after Next page.
-                  </span>
+                  {LEADS_PAGE_SIZE} per page · newest first · leads come from your Places bot runs.
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">

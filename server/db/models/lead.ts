@@ -17,7 +17,7 @@ const leadSchema = new Schema(
     templateId: { type: Schema.Types.ObjectId, ref: "Template", default: null },
     status: {
       type: String,
-      enum: ["sent", "pending", "social_ready"],
+      enum: ["sent", "pending"],
       default: "pending",
     },
     isSample: { type: Boolean, default: false },

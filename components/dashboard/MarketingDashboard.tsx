@@ -622,6 +622,14 @@ export function MarketingDashboard({
     await refresh();
   };
 
+  const onEmailChange = async (leadId: string, email: string | null) => {
+    await apiJson(`/api/leads/${leadId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ email }),
+    });
+    await refresh();
+  };
+
   const onDeleteLead = async (leadId: string) => {
     const lead = leads.find((x) => x._id === leadId);
     setLeadDeleteTarget({ id: leadId, name: lead?.businessName || "this lead" });
@@ -1419,6 +1427,7 @@ export function MarketingDashboard({
                   onTemplateChange={onTemplateChange}
                   onStatusChange={onStatusChange}
                   onDelete={onDeleteLead}
+                  onEmailChange={onEmailChange}
                 />
               ))}
               {!leads.length && (

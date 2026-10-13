@@ -2,6 +2,8 @@ import mongoose from "mongoose";
 import { NextResponse } from "next/server";
 import { AppSettingsModel, LeadModel, TemplateModel } from "@/server/db/models";
 import { filterByWebsitePreference, geocodeAddress, searchPlacesText } from "@/server/services/places";
+import type { PlacesSearchPlace } from "@/server/services/places";
+import { verifyBusinessWebsite } from "@/server/services/website-verify";
 import { requireCurrentUserId } from "@/server/auth/session";
 import { getGoogleApiKey } from "@/server/lib/google-api-key";
 import { connectDB } from "@/server/db/connect";
@@ -73,6 +75,32 @@ async function resolveTemplateIdForPlacesRun(
   return explicitDefault ?? heuristicGeneral ?? fallbackFirst;
 }
 
+
+/**
+ * Google's websiteUri is often empty for businesses that DO have a site.
+ * Best-effort re-check (one quick search each, concurrency-limited, never throws)
+ * so the "no website" list isn't polluted with false positives.
+ */
+async function dropVerifiedWebsites(places: PlacesSearchPlace[]): Promise<PlacesSearchPlace[]> {
+  const CONCURRENCY = 6;
+  const out: PlacesSearchPlace[] = [];
+  for (let i = 0; i < places.length; i += CONCURRENCY) {
+    const batch = places.slice(i, i + CONCURRENCY);
+    const results = await Promise.all(
+      batch.map(async (p) => {
+        const found = await verifyBusinessWebsite(p.businessName, p.location);
+        if (found) {
+          console.log(`[website-verify] dropping "${p.businessName}": found ${found}`);
+          return null;
+        }
+        return p;
+      }),
+    );
+    for (const p of results) if (p) out.push(p);
+  }
+  return out;
+}
+
 export async function POST(req: Request) {
   try {
     await connectDB();
@@ -139,13 +167,19 @@ export async function POST(req: Request) {
 
     const filtered = filterByWebsitePreference(raw, websiteFilter);
 
+    // Drop "no website" candidates where a quick web check finds an official site.
+    const finalLeads =
+      websiteFilter === "no_website" && filtered.length > 0
+        ? await dropVerifiedWebsites(filtered)
+        : filtered;
+
     const saved: string[] = [];
     const categoryLabel = mode === "category" ? (body.categoryName?.trim() || "") : "";
     const categoryId = mode === "category" ? (body.categoryId?.trim() || null) : null;
 
     const resolvedTemplateId = await resolveTemplateIdForPlacesRun(userId, categoryLabel, categoryId);
 
-    for (const p of filtered) {
+    for (const p of finalLeads) {
       const websiteUri = p.websiteUri;
       const websiteStatus = websiteUri ? "Has website" : "No website";
       const $set: Record<string, unknown> = {
@@ -177,7 +211,8 @@ export async function POST(req: Request) {
       ok: true,
       textQuery,
       rawCount: raw.length,
-      matchedCount: filtered.length,
+      matchedCount: finalLeads.length,
+      websiteVerifiedDropped: filtered.length - finalLeads.length,
       savedCount: saved.length,
       leadIds: saved,
     });

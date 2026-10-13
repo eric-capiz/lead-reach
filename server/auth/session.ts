@@ -25,11 +25,13 @@ function base64UrlDecode(input: string): Buffer {
 }
 
 function authSecret(): string {
-  return (
-    process.env.AUTH_SECRET ||
-    process.env.MONGODB_URI ||
-    "dev_only_change_me_in_production"
-  );
+  const secret = process.env.AUTH_SECRET;
+  if (!secret) {
+    throw new Error(
+      "AUTH_SECRET is not set. Set it in your environment variables to run LeadReach."
+    );
+  }
+  return secret;
 }
 
 function sign(payload: string): string {

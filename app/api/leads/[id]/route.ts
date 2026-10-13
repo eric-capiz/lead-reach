@@ -16,7 +16,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
     }
     const body = (await req.json()) as {
       templateId?: string | null;
-      status?: "sent" | "pending" | "social_ready";
+      status?: "sent" | "pending";
       email?: string | null;
       instagram?: string | null;
       facebook?: string | null;
@@ -33,7 +33,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
       }
       patch.templateId = body.templateId;
     }
-    if (body.status === "sent" || body.status === "pending" || body.status === "social_ready") {
+    if (body.status === "sent" || body.status === "pending") {
       patch.status = body.status;
     }
     if ("email" in body) patch.email = body.email?.trim() || null;

@@ -32,6 +32,7 @@ export function LeadCard({
   onTemplateChange,
   onStatusChange,
   onDelete,
+  onEmailChange,
 }: {
   row: LeadApi;
   templates: TemplateLite[];
@@ -39,8 +40,20 @@ export function LeadCard({
   onTemplateChange: (id: string, templateId: string) => Promise<void>;
   onStatusChange: (id: string, status: LeadStatus) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  onEmailChange: (id: string, email: string | null) => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
+  const [editingEmail, setEditingEmail] = useState(false);
+  const [emailDraft, setEmailDraft] = useState(row.email ?? "");
+
+  const saveEmail = () => {
+    const v = emailDraft.trim();
+    setBusy(true);
+    void onEmailChange(row._id, v ? v : null).finally(() => {
+      setBusy(false);
+      setEditingEmail(false);
+    });
+  };
 
   const tpl = useMemo(
     () => templates.find((t) => t._id === row.templateId) ?? templates[0],
@@ -125,12 +138,65 @@ export function LeadCard({
         </div>
         <div className="col-span-2 text-lux-muted">
           <span className="text-lux-subtle">Email </span>
-          {row.email ? (
-            <a href={`mailto:${row.email}`} className="font-mono text-[11px] text-lux-link hover:text-lux-link-hover">
-              {row.email}
-            </a>
+          {editingEmail ? (
+            <span className="inline-flex items-center gap-1.5">
+              <input
+                value={emailDraft}
+                onChange={(e) => setEmailDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") saveEmail();
+                  if (e.key === "Escape") {
+                    setEmailDraft(row.email ?? "");
+                    setEditingEmail(false);
+                  }
+                }}
+                placeholder="name@business.com"
+                disabled={busy}
+                autoFocus
+                className="w-52 rounded-sm border border-lux-line bg-lux-field px-2 py-1 font-mono text-[11px] text-lux-fg outline-none focus:border-lux-gold"
+              />
+              <button
+                type="button"
+                disabled={busy}
+                onClick={saveEmail}
+                className="rounded-sm border border-lux-teal/40 bg-lux-teal/10 px-2 py-1 text-[10px] font-semibold text-lux-link hover:bg-lux-teal/20 disabled:opacity-40"
+              >
+                Save
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  setEmailDraft(row.email ?? "");
+                  setEditingEmail(false);
+                }}
+                className="rounded-sm border border-lux-line px-2 py-1 text-[10px] text-lux-muted hover:text-lux-fg disabled:opacity-40"
+              >
+                Cancel
+              </button>
+            </span>
           ) : (
-            <span className="font-mono text-[11px] text-lux-fg-dim">—</span>
+            <span className="inline-flex items-center gap-1.5">
+              {row.email ? (
+                <a href={`mailto:${row.email}`} className="font-mono text-[11px] text-lux-link hover:text-lux-link-hover">
+                  {row.email}
+                </a>
+              ) : (
+                <span className="font-mono text-[11px] text-lux-fg-dim">—</span>
+              )}
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  setEmailDraft(row.email ?? "");
+                  setEditingEmail(true);
+                }}
+                title={row.email ? "Edit email" : "Add email"}
+                className="rounded-sm border border-lux-line px-1.5 py-0.5 text-[10px] text-lux-muted transition hover:border-lux-gold/50 hover:text-lux-gold-bright disabled:opacity-40"
+              >
+                {row.email ? "Edit" : "Add"}
+              </button>
+            </span>
           )}
         </div>
         <div className="col-span-2 flex flex-wrap items-baseline gap-x-3 gap-y-2 text-[11px]">

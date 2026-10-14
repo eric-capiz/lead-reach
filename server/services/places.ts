@@ -18,6 +18,28 @@ const SEARCH_FIELD_MASK = [
   "places.googleMapsUri",
 ].join(",");
 
+/**
+ * Google API calls without a timeout can hang indefinitely, which leaves the
+ * dashboard's run button permanently disabled (runBusy never resets because
+ * the frontend's await never settles). Fail fast instead.
+ */
+const GOOGLE_FETCH_TIMEOUT_MS = 30000;
+
+async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), GOOGLE_FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } catch (e) {
+    if (e instanceof Error && e.name === "AbortError") {
+      throw new Error(`Google API request timed out after ${GOOGLE_FETCH_TIMEOUT_MS / 1000}s: ${url.split("?")[0]}`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function displayNameText(p: { displayName?: { text?: string } }): string {
   return p.displayName?.text?.trim() || "Unknown business";
 }
@@ -29,7 +51,7 @@ export async function geocodeAddress(
   const url = new URL("https://maps.googleapis.com/maps/api/geocode/json");
   url.searchParams.set("address", address);
   url.searchParams.set("key", apiKey);
-  const res = await fetch(url.toString());
+  const res = await fetchWithTimeout(url.toString());
   const data = (await res.json()) as {
     status: string;
     error_message?: string;
@@ -70,7 +92,7 @@ export async function searchPlacesText(params: {
     },
   };
 
-  const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
+  const res = await fetchWithTimeout("https://places.googleapis.com/v1/places:searchText", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

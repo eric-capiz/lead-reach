@@ -10,6 +10,11 @@ const appSettingsSchema = new Schema(
       enum: ["no_website", "any", "has_website"],
       default: "no_website",
     },
+    // Monthly Google Places API budget guard (hard $0-cost ceiling).
+    // Each search run = 1 Text Search call (Enterprise SKU: 1,000 free/mo).
+    monthlySearchCap: { type: Number, default: 900 },
+    monthlySearchCount: { type: Number, default: 0 },
+    monthlySearchPeriod: { type: String, default: "" }, // "YYYY-MM" (UTC)
   },
   { timestamps: true },
 );

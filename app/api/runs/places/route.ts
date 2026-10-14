@@ -123,6 +123,29 @@ export async function POST(req: Request) {
     const settings = await AppSettingsModel.findOne({ userId });
     if (!settings) return NextResponse.json({ error: "No settings" }, { status: 500 });
 
+    // Monthly API budget guard: hard ceiling so searches can never cost money.
+    // Google bills Text Search at the Enterprise SKU (1,000 free calls/month);
+    // the cap defaults to 900 to stay safely under it. Resets each calendar month (UTC).
+    const now = new Date();
+    const period = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+    if (settings.monthlySearchPeriod !== period) {
+      settings.monthlySearchPeriod = period;
+      settings.monthlySearchCount = 0;
+    }
+    const cap =
+      typeof settings.monthlySearchCap === "number" && settings.monthlySearchCap > 0
+        ? settings.monthlySearchCap
+        : 900;
+    if (settings.monthlySearchCount >= cap) {
+      return NextResponse.json(
+        {
+          error: `Monthly search budget reached (${settings.monthlySearchCount}/${cap}). Search runs resume on the 1st of next month.`,
+        },
+        { status: 429 },
+      );
+    }
+    settings.monthlySearchCount += 1;
+
     const locationAddress = body.locationAddress?.trim() || settings.locationAddress;
     if (!locationAddress?.trim()) {
       return NextResponse.json({ error: "locationAddress required" }, { status: 400 });

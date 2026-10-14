@@ -1116,15 +1116,6 @@ export function MarketingDashboard({
                     </button>
                   ))}
                 </nav>
-                <button
-                  type="button"
-                  disabled={runBusy}
-                  onClick={() => void runPlaces("category")}
-                  className="rounded-sm border border-[color:var(--color-lux-gold-line)] bg-lux-panel px-6 py-2.5 text-xs font-semibold uppercase tracking-[0.2em] text-lux-gold-bright shadow-[0_0_0_1px_rgba(201,162,39,0.12),0_12px_36px_-10px_rgba(0,0,0,0.5)] transition hover:bg-lux-gold-soft/30 hover:text-lux-fg disabled:opacity-40"
-                >
-                  Run Bot
-                </button>
-
               </div>
             </div>
           </div>

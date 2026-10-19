@@ -14,6 +14,10 @@ const leadSchema = new Schema(
     googleMapsUrl: { type: String, required: true },
     instagram: { type: String, default: null },
     facebook: { type: String, default: null },
+    /** Street address (populated by spreadsheet imports). */
+    address: { type: String, default: "" },
+    /** Freeform notes (populated by spreadsheet imports). */
+    notes: { type: String, default: "" },
     templateId: { type: Schema.Types.ObjectId, ref: "Template", default: null },
     status: {
       type: String,

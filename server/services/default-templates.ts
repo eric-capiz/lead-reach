@@ -15,8 +15,8 @@ export const DEFAULT_CATEGORY_NAMES = [
 /** Name + tag used for the catch-all template that covers unmatched categories. */
 export const GENERAL_TEMPLATE_NAME = "General";
 
-/** "Barbers" -> "barber", "Cleaning Services" -> "cleaning service". */
-function singularLower(categoryName: string): string {
+/** Kept for potential category-aware copy in the future. */
+export function singularLower(categoryName: string): string {
   const t = categoryName.trim().toLowerCase();
   if (!t) return "local business";
   if (t.endsWith("ies")) return `${t.slice(0, -3)}y`;
@@ -25,35 +25,36 @@ function singularLower(categoryName: string): string {
   return t;
 }
 
-export function defaultSubject(categoryName?: string): string {
-  const noun = categoryName ? singularLower(categoryName) : "";
-  return noun ? `Quick website idea for your ${noun}` : "Quick website idea for {{businessName}}";
+export function defaultSubject(_categoryName?: string): string {
+  return "Quick idea for {{businessName}}";
 }
 
-export function defaultEmailBody(categoryName?: string): string {
-  const noun = categoryName ? singularLower(categoryName) : "local business";
+export function defaultEmailBody(_categoryName?: string): string {
   return [
     "Hi {{businessName}},",
     "",
-    `I came across your ${noun} and noticed you might not have a website yet — or that the one you have could be working harder for you.`,
+    "Found you online, great work. But you do not show up when people Google your services in {{city}}. Your competitors do.",
     "",
-    `I build simple, fast websites for local businesses that make it easy for customers to find you, see what you offer, and get in touch. I'd be glad to put together a quick mockup so you can see exactly what it would look like, at no cost and with no obligation.`,
+    "That is customers you are missing. I build simple websites for local businesses. Here is one I did, similar style to what I would make for you: {{sampleProject}}",
     "",
-    "Would you be open to a short conversation this week?",
+    "Pricing is simple. $100 plus domain costs gets you 1 to 2 pages with a contact form. You own everything.",
     "",
-    "Best,",
+    "Reply if you want to see a free mockup. No pressure.",
+    "",
     "{{myName}}",
     "{{portfolioLink}}",
   ].join("\n");
 }
 
-export function defaultDmBody(categoryName?: string): string {
-  const noun = categoryName ? singularLower(categoryName) : "local business";
+export function defaultDmBody(_categoryName?: string): string {
   return [
-    `Hi {{businessName}}! I build websites for local ${noun}s and put together a quick mockup idea for yours.`,
-    "Happy to send it over — no charge, no strings. Want me to share it?",
+    "Hi {{businessName}}! Found you online, love what you do. Quick thought: you do not show up on Google when people search for your services nearby, and that is customers you are missing.",
     "",
-    "— {{myName}}",
+    "I build simple $100 websites for local businesses (plus domain). Here is a sample of my work: {{sampleProject}}",
+    "",
+    "Want me to mock one up for you? Free, no pressure.",
+    "",
+    "- {{myName}}",
   ].join("\n");
 }
 

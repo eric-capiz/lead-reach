@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { applyMergeTemplate, buildMergeMap } from "@/lib/merge";
+import { sampleProjectFor } from "@/lib/sample-projects";
 import type { LeadStatus } from "@/lib/constants";
 import type { LeadApi, MergeFieldLite, TemplateLite } from "@/lib/types/dashboard";
 
@@ -60,25 +61,30 @@ export function LeadCard({
     [templates, row.templateId],
   );
 
-  const mergedBody = useMemo(() => {
-    if (!tpl) return "";
+  const mergedBodies = useMemo(() => {
+    if (!tpl) return { email: "", dm: "" };
     const map = buildMergeMap(
       mergeFields.map((m) => ({ key: m.key, value: m.value })),
       {
         businessname: row.businessName,
         category: row.category,
+        city: row.location,
+        sampleproject: sampleProjectFor(row.category),
       },
     );
-    return applyMergeTemplate(tpl.body, map);
-  }, [tpl, mergeFields, row.businessName, row.category]);
+    return {
+      email: applyMergeTemplate(tpl.body, map),
+      dm: applyMergeTemplate(tpl.dmBody || "", map),
+    };
+  }, [tpl, mergeFields, row.businessName, row.category, row.location]);
 
-  const copy = useCallback(async () => {
+  const copy = useCallback(async (text: string) => {
     try {
-      await navigator.clipboard.writeText(mergedBody);
+      await navigator.clipboard.writeText(text);
     } catch {
       window.alert("Could not copy to clipboard");
     }
-  }, [mergedBody]);
+  }, []);
 
   const done = row.status === "sent";
   const websiteHref = leadWebsiteHref(row.websiteUri);
@@ -257,6 +263,12 @@ export function LeadCard({
             )}
           </span>
         </div>
+        {row.address || row.notes ? (
+          <div className="col-span-2 text-[11px] leading-relaxed text-lux-muted">
+            {row.address ? <p>{row.address}</p> : null}
+            {row.notes ? <p className="mt-0.5 text-lux-subtle">{row.notes}</p> : null}
+          </div>
+        ) : null}
       </dl>
 
       <div className="mt-4 flex flex-wrap gap-2 border-t border-lux-line-soft pt-3">
@@ -284,7 +296,7 @@ export function LeadCard({
         </button>
       </div>
 
-      <div className="mt-5 flex flex-col gap-3 border-t border-lux-line-soft pt-4 sm:flex-row sm:flex-wrap sm:items-center">
+      <div className="mt-4 flex flex-col gap-3 border-t border-lux-line-soft pt-4 sm:flex-row sm:flex-wrap sm:items-center">
         <select
           value={row.templateId ?? ""}
           onChange={(e) => {
@@ -305,12 +317,42 @@ export function LeadCard({
         <button
           type="button"
           disabled={busy}
-          onClick={() => void copy()}
+          onClick={() => void copy(mergedBodies.email)}
           className="rounded-sm border border-lux-line bg-lux-canvas px-4 py-2 text-xs font-semibold tracking-wide text-lux-fg-dim transition hover:border-lux-teal/40 hover:text-lux-link"
         >
-          Copy message
+          Copy email
+        </button>
+        <button
+          type="button"
+          disabled={busy || !mergedBodies.dm}
+          onClick={() => void copy(mergedBodies.dm)}
+          className="rounded-sm border border-lux-line bg-lux-canvas px-4 py-2 text-xs font-semibold tracking-wide text-lux-fg-dim transition hover:border-lux-teal/40 hover:text-lux-link disabled:opacity-40"
+        >
+          Copy DM
         </button>
       </div>
+
+      <details className="mt-3 rounded-sm border border-lux-line-soft bg-lux-canvas/60">
+        <summary className="cursor-pointer px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-lux-muted hover:text-lux-fg">
+          Preview messages
+        </summary>
+        <div className="space-y-3 border-t border-lux-line-soft px-3 py-3">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-lux-gold-muted">Email</p>
+            <pre className="mt-1 whitespace-pre-wrap font-sans text-xs leading-relaxed text-lux-fg-dim">
+              {mergedBodies.email || "—"}
+            </pre>
+          </div>
+          {mergedBodies.dm ? (
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-lux-gold-muted">DM</p>
+              <pre className="mt-1 whitespace-pre-wrap font-sans text-xs leading-relaxed text-lux-fg-dim">
+                {mergedBodies.dm}
+              </pre>
+            </div>
+          ) : null}
+        </div>
+      </details>
     </article>
   );
 }

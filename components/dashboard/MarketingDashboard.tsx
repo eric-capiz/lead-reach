@@ -103,8 +103,6 @@ function normalizeLead(raw: Record<string, unknown>): LeadApi {
     googleMapsUrl: String(raw.googleMapsUrl ?? ""),
     instagram: (raw.instagram as string | null) ?? null,
     facebook: (raw.facebook as string | null) ?? null,
-    address: (raw.address as string | null) ?? null,
-    notes: (raw.notes as string | null) ?? null,
     status: raw.status as LeadStatus,
     templateId,
     templateName: (raw.templateName as string | null) ?? null,
@@ -207,9 +205,6 @@ export function MarketingDashboard({
   const [deleteAllModalOpen, setDeleteAllModalOpen] = useState(false);
   const [deleteAllBusy, setDeleteAllBusy] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
-  const [importBusy, setImportBusy] = useState(false);
-  const [importResult, setImportResult] = useState<string | null>(null);
-  const importInputRef = useRef<HTMLInputElement | null>(null);
   const [newTemplateModalOpen, setNewTemplateModalOpen] = useState(false);
   const [newTemplateName, setNewTemplateName] = useState("");
   const [newTemplateBusy, setNewTemplateBusy] = useState(false);
@@ -679,34 +674,8 @@ export function MarketingDashboard({
     }
   };
 
-  const importSpreadsheet = async (file: File) => {
+  const confirmDeleteAllLeads = async () => {
     try {
-      setImportBusy(true);
-      setImportResult(null);
-      const form = new FormData();
-      form.append("file", file);
-      const res = await fetch("/api/leads/import", { method: "POST", body: form });
-      const j = (await res.json()) as {
-        error?: string;
-        imported?: number;
-        skipped?: number;
-        errors?: string[];
-      };
-      if (!res.ok) throw new Error(j.error || "Import failed");
-      const parts = [`Imported ${j.imported ?? 0} leads`];
-      if (j.skipped) parts.push(`${j.skipped} skipped (duplicates/blank)`);
-      if (j.errors?.length) parts.push(`${j.errors.length} errors`);
-      setImportResult(parts.join(" · "));
-      await refresh({ resetLeadsPage: 1 });
-    } catch (e) {
-      window.alert(e instanceof Error ? e.message : "Import failed");
-    } finally {
-      setImportBusy(false);
-      if (importInputRef.current) importInputRef.current.value = "";
-    }
-  };
-
-  const confirmDeleteAllLeads = async () => {    try {
       setDeleteAllBusy(true);
       await apiJson<{ ok: boolean; deletedCount: number }>("/api/leads", { method: "DELETE" });
       setDeleteAllModalOpen(false);
@@ -1354,28 +1323,10 @@ export function MarketingDashboard({
               <div>
                 <h2 className="font-serif text-2xl font-semibold text-lux-fg">Leads</h2>
                 <p className="text-xs text-lux-muted">
-                  {LEADS_PAGE_SIZE} per page · newest first · import a spreadsheet or run the Places bot.
+                  {LEADS_PAGE_SIZE} per page · newest first · leads come from your Places bot runs.
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <input
-                  ref={importInputRef}
-                  type="file"
-                  accept=".xlsx,.xls"
-                  className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) void importSpreadsheet(f);
-                  }}
-                />
-                <button
-                  type="button"
-                  onClick={() => importInputRef.current?.click()}
-                  disabled={importBusy}
-                  className="rounded-sm border border-lux-gold/45 bg-lux-gold-soft/30 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-lux-gold-bright transition hover:bg-lux-gold-soft disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  {importBusy ? "Importing…" : "Import spreadsheet"}
-                </button>
                 <button
                   type="button"
                   onClick={() => void exportLeads()}
@@ -1394,11 +1345,6 @@ export function MarketingDashboard({
                 </button>
               </div>
             </div>
-            {importResult ? (
-              <p className="mt-3 rounded-sm border border-lux-teal/35 bg-lux-teal/10 px-3 py-2 text-xs text-lux-link">
-                {importResult}
-              </p>
-            ) : null}
             <div className="mt-6 flex flex-col gap-4 rounded-sm border border-lux-line bg-lux-panel/90 p-4 sm:flex-row sm:flex-wrap sm:items-end">
               <label className="block min-w-[200px] flex-1 space-y-1">
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-lux-gold-muted">

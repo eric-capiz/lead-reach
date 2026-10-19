@@ -12,8 +12,6 @@ export type LeadApi = {
   googleMapsUrl: string;
   instagram: string | null;
   facebook: string | null;
-  address?: string | null;
-  notes?: string | null;
   status: LeadStatus;
   templateId: string | null;
   templateName?: string | null;
